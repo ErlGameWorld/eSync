@@ -1,18 +1,21 @@
 -module(esScanner).
 -behaviour(gen_ipc).
 
--compile([export_all, nowarn_export_all]).
+-compile(inline).
+-compile({inline_size, 128}).
 
 %% API
 -export([
    start_link/0,
    rescan/0,
    info/0,
-   enable_patching/0,
+   swSyncNode/1,
    pause/0,
    unpause/0,
-   set_log/1,
-   get_log/0
+   getOnsync/0,
+   setOnsync/1,
+   setLog/1,
+   getLog/0
 ]).
 
 %% gen_ipc callbacks
@@ -30,11 +33,17 @@
 -define(LOG_OR_GROWL_ON(Val), Val == true;Val == all;Val == skip_success;is_list(Val), Val =/= []).
 -define(LOG_OR_GROWL_OFF(Val), Val == false;F == none;F == []).
 
+-define(gTimeout(Type, Time), {{gTimeout, Type}, Time, Type}).
+
+-define(esCfgSync, esCfgSync).
+
+-define(Log, log).
 -define(moduleTime, moduleTime).
 -define(srcDirTime, srcDirTime).
 -define(srcFileTime, srcFileTime).
 -define(compareBeamTime, compareBeamTime).
 -define(compareSrcFileTime, compareSrcFileTime).
+-define(CfgList, [{?Log, all}, {?moduleTime, 30000}, {?srcDirTime, 5000}, {?srcFileTime, 5000}, {?compareBeamTime, 3000}, {?compareSrcFileTime, 3000}]).
 
 -type timestamp() :: file:date_time() | 0.
 
@@ -66,35 +75,37 @@ unpause() ->
    ok.
 
 pause() ->
-   esUtils:log_success("Pausing Sync. Call sync:go() to restart~n"),
+   esUtils:log_success("Pausing erlSync. Call sync:go() to restart~n"),
    gen_ipc:cast(?SERVER, miPause),
    ok.
 
 info() ->
-   io:format("Sync Info...~n"),
-   gen_ipc:cast(?SERVER, info),
+   io:format("erlSync Info...~n"),
+   gen_ipc:call(?SERVER, miInfo),
    ok.
 
-set_log(T) when ?LOG_OR_GROWL_ON(T) ->
+setLog(T) when ?LOG_OR_GROWL_ON(T) ->
    esUtils:setEnv(log, T),
+   loadCfg(),
    esUtils:log_success("Console Notifications Enabled~n"),
    ok;
-set_log(F) when ?LOG_OR_GROWL_OFF(F) ->
-   esUtils:log_success("Console Notifications Disabled~n"),
+setLog(F) when ?LOG_OR_GROWL_OFF(F) ->
    esUtils:setEnv(log, none),
+   loadCfg(),
+   esUtils:log_success("Console Notifications Disabled~n"),
    ok.
 
-get_log() ->
-   esUtils:getEnv(log, all).
+getLog() ->
+   ?esCfgSync:getv(log).
 
-enable_patching() ->
-   gen_ipc:cast(?SERVER, enable_patching),
+swSyncNode(IsSync) ->
+   gen_ipc:cast(?SERVER, {miSyncNode, IsSync}),
    ok.
 
-get_onsync() ->
+getOnsync() ->
    gen_ipc:call(?SERVER, miGetOnsync).
 
-set_onsync(Fun) ->
+setOnsync(Fun) ->
    gen_ipc:call(?SERVER, {miSetOnsync, Fun}).
 
 
@@ -107,6 +118,7 @@ init([]) ->
    erlang:process_flag(trap_exit, true),
    rescan(),
    startup(),
+   loadCfg(),
    {ok, running, #state{}}.
 
 handleCall(miGetOnsync, _, State, _From) ->
@@ -115,13 +127,16 @@ handleCall(miGetOnsync, _, State, _From) ->
 handleCall({miSetOnsync, Fun}, _, State, _From) ->
    State2 = State#state{onsyncFun = Fun},
    {reply, ok, State2};
+
+handleCall(miInfo, _, State, _Form) ->
+   {reply, {erlang:get(), State}, State};
 handleCall(_Request, _, _State, _From) ->
    keepStatusState.
 
 handleCast(miPause, _, State) ->
    {nextStatus, pause, State};
 handleCast(miUnpause, _, State) ->
-   %% TODO restart
+   rescan(),
    {nextStatus, running, State};
 handleCast(miCollMods, running, State) ->
    % Get a list of all loaded non-system modules.
@@ -131,9 +146,8 @@ handleCast(miCollMods, running, State) ->
    CollModules = collMods(AllModules),
 
    %% Schedule the next interval...
-   Time = esUtils:getEnv(?moduleTime, 30000),
-
-   {keepStatus, State#state{modules = CollModules}, [{{gTimeout, miCollMods}, Time, miCollMods}]};
+   Time = ?esCfgSync:getv(?moduleTime),
+   {keepStatus, State#state{modules = CollModules}, [?gTimeout(miCollMods, Time)]};
 
 handleCast(miCollSrcDirs, running, State) ->
    {USortedSrcDirs, USortedHrlDirs} =
@@ -145,8 +159,9 @@ handleCast(miCollSrcDirs, running, State) ->
          {ok, {replace, DirsAndOpts}} ->
             collSrcDirs(State, [], dirs(DirsAndOpts))
       end,
-   Time = esUtils:getEnv(?srcDirTime, 30000),
-   {keepStatus, State#state{srcDirs = USortedSrcDirs, hrlDirs = USortedHrlDirs}, [{{gTimeout, miCollSrcDirs}, Time, miCollSrcDirs}]};
+
+   Time = ?esCfgSync:getv(?srcDirTime),
+   {keepStatus, State#state{srcDirs = USortedSrcDirs, hrlDirs = USortedHrlDirs}, [?gTimeout(miCollSrcDirs, Time)]};
 
 handleCast(miCollSrcFiles, running, State) ->
    %% For each source dir, get a list of source files...
@@ -164,9 +179,9 @@ handleCast(miCollSrcFiles, running, State) ->
    HrlFiles = lists:usort(lists:foldl(FHrl, [], State#state.hrlDirs)),
 
    %% Schedule the next interval...
-   Time = esUtils:getEnv(?srcFileTime, 5000),
+   Time = ?esCfgSync:getv(?srcFileTime),
    %% Return with updated files...
-   {keepStatus, State#state{srcFiles = ErlFiles, hrlFiles = HrlFiles}, [{{gTimeout, miCollSrcFiles}, Time, miCollSrcFiles}]};
+   {keepStatus, State#state{srcFiles = ErlFiles, hrlFiles = HrlFiles}, [?gTimeout(miCollSrcFiles, Time)]};
 
 handleCast(miCompareBeams, running, #state{onsyncFun = OnsyncFun} = State) ->
    %% Create a list of beam file lastmod times, but filter out modules not having
@@ -190,8 +205,8 @@ handleCast(miCompareBeams, running, #state{onsyncFun = OnsyncFun} = State) ->
    %% the beam...
    reloadChangedMod(State#state.beamTimes, NewBeamLastMod, State#state.patching, OnsyncFun, []),
 
-   Time = esUtils:getEnv(?compareBeamTime, 2000),
-   {keepStatus, State#state{beamTimes = NewBeamLastMod}, [{{gTimeout, miCompareBeams}, Time, miCompareBeams}]};
+   Time = ?esCfgSync:getv(?compareBeamTime),
+   {keepStatus, State#state{beamTimes = NewBeamLastMod}, [?gTimeout(miCompareBeams, Time)]};
 
 handleCast(miCompareSrcFiles, running, State) ->
    %% Create a list of file lastmod times...
@@ -207,8 +222,8 @@ handleCast(miCompareSrcFiles, running, State) ->
 
    %% Schedule the next interval...
 
-   Time = esUtils:getEnv(?compareSrcFileTime, 2000),
-   {keepStatus, State#state{srcFileTimes = NewSrcFileLastMod}, [{{gTimeout, miCompareSrcFiles}, Time, miCompareSrcFiles}]};
+   Time = ?esCfgSync:getv(?compareSrcFileTime),
+   {keepStatus, State#state{srcFileTimes = NewSrcFileLastMod}, [?gTimeout(miCompareSrcFiles, Time)]};
 
 handleCast(miCompareHrlFiles, running, State) ->
    %% Create a list of file lastmod times...
@@ -223,18 +238,16 @@ handleCast(miCompareHrlFiles, running, State) ->
    recompileChangeHrlFile(State#state.hrlFileTimes, NewHrlFileLastMod, State#state.srcFiles, State#state.patching),
 
    %% Schedule the next interval...
-   Time = esUtils:getEnv(?compareSrcFileTime, 2000),
-   {keepStatus, State#state{hrlFileTimes = NewHrlFileLastMod}, [{{gTimeout, miCompareHrlFiles}, Time, miCompareHrlFiles}]};
+   Time = ?esCfgSync:getv(?compareSrcFileTime),
+   {keepStatus, State#state{hrlFileTimes = NewHrlFileLastMod}, [?gTimeout(miCompareHrlFiles, Time)]};
 
-handleCast(info, _, State) ->
-   io:format("Modules: ~p~n", [State#state.modules]),
-   io:format("Source Dirs: ~p~n", [State#state.srcDirs]),
-   io:format("Source Files: ~p~n", [State#state.srcFiles]),
-   {noreply, State};
-
-handleCast(enable_patching, _, State) ->
-   NewState = State#state{patching = true},
-   {noreply, NewState};
+handleCast({miSyncNode, IsSync}, _, State) ->
+   case IsSync of
+      true ->
+         {keepStatus, State#state{patching = true}};
+      _ ->
+         {keepStatus, State#state{patching = false}}
+   end;
 
 handleCast(_Msg, _, _State) ->
    keepStatusState.
@@ -263,29 +276,11 @@ dirs(DirsAndOpts) ->
          Dir
       end || {Dir, Opts} <- DirsAndOpts].
 
-handle_info(_Info, State) ->
-   {noreply, State}.
 
 terminate(_Reason, _Status, _State) ->
    ok.
 
 %%% PRIVATE FUNCTIONS %%%
-
-schedule_cast(Msg, Default, Timers) ->
-   %% Cancel the old timer...
-   TRef = proplists:get_value(Msg, Timers),
-   timer:cancel(TRef),
-
-   %% Lookup the interval...
-   IntervalKey = list_to_atom(atom_to_list(Msg) ++ "_interval"),
-   Interval = esUtils:getEnv(IntervalKey, Default),
-
-   %% Schedule the call...
-   {ok, NewTRef} = timer:apply_after(Interval, gen_ipc, cast, [?SERVER, Msg]),
-
-   %% Return the new timers structure...
-   lists:keystore(Msg, 1, Timers, {Msg, NewTRef}).
-
 reloadChangedMod([{Module, LastMod} | T1], [{Module, LastMod} | T2], EnablePatching, OnsyncFun, Acc) ->
    %% Beam hasn't changed, do nothing...
    reloadChangedMod(T1, T2, EnablePatching, OnsyncFun, Acc);
@@ -756,5 +751,9 @@ setOptions(SrcDir, Options) ->
 
 startup() ->
    io:format("Growl notifications disabled~n").
+
+loadCfg() ->
+   KVs = [{Key, esUtils:getEnv(Key, DefVal)} || {Key, DefVal} <- ?CfgList],
+   esUtils:load(?esCfgSync, KVs).
 %% ***********************************misc fun end *********************************************
 

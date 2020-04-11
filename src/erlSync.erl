@@ -5,18 +5,14 @@
    stop/0,
    run/0,
    pause/0,
-   unpause/0,
-   patch/0,
    info/0,
    log/1,
    log/0,
    onsync/0,
-   onsync/1
+   onsync/1,
+   swSyncNode/1
 ]).
 
--include_lib("kernel/include/file.hrl").
--define(SERVER, ?MODULE).
--define(PRINT(Var), io:format("DEBUG: ~p:~p - ~p~n~n ~p~n~n", [?MODULE, ?LINE, ??Var, Var])).
 -define(VALID_GROWL_OR_LOG(X), is_boolean(X); is_list(X); X == all; X == none; X == skip_success).
 
 start() ->
@@ -28,37 +24,35 @@ stop() ->
 run() ->
    case start() of
       {ok, _Started} ->
+         esScanner:unpause(),
+         esScanner:rescan(),
          ok;
       {error, _Reason} ->
-         esScanner:unpause(),
-         esScanner:rescan()
+         io:format("Err")
    end.
-
-patch() ->
-   run(),
-   esScanner:enable_patching(),
-   ok.
 
 pause() ->
    esScanner:pause().
 
-unpause() ->
-   esScanner:unpause().
+swSyncNode(IsSync) ->
+   run(),
+   esScanner:swSyncNode(IsSync),
+   ok.
 
 info() ->
    esScanner:info().
 
 log(Val) when ?VALID_GROWL_OR_LOG(Val) ->
-   esScanner:set_log(Val).
+   esScanner:setLog(Val).
 
 log() ->
-   esScanner:get_log().
+   esScanner:getLog().
 
 onsync(Fun) ->
-   esOptions:set_onsync(Fun).
+   esScanner:setOnsync(Fun).
 
 onsync() ->
-   esOptions:get_onsync().
+   esScanner:getOnsync().
 
 
 

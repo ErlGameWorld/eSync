@@ -1,5 +1,8 @@
 -module(esUtils).
 
+-compile(inline).
+-compile({inline_size, 128}).
+
 -export([
    getSrcDirFromMod/1,
    getOptionsFromMod/1,
@@ -8,6 +11,7 @@
    wildcard/2,
    getEnv/2,
    setEnv/2,
+   load/2,
    getSystemModules/0
 ]).
 
@@ -181,7 +185,6 @@ normalizeCaseWindowsDir(Dir) ->
       {unix, _} -> Dir
    end.
 
-
 %% @private This is an attempt to intelligently fix paths in modules when a
 %% release is moved.  Essentially, it takes a module name and its original path
 %% from Module:module_info(compile), say
@@ -250,7 +253,7 @@ getEnv(Var, Default) ->
          Default
    end.
 
-%% @private Set a sync environment variable.
+%% @private Set a erlSync environment variable.
 setEnv(Var, Val) ->
    ok = application:set_env(erlSync, Var, Val).
 
@@ -269,8 +272,8 @@ log_warnings(Message) ->
 can_we_log(MsgType) ->
    can_we_notify(log, MsgType).
 
-can_we_notify(GrowlOrLog, MsgType) ->
-   case esUtils:getEnv(GrowlOrLog, all) of
+can_we_notify(_GrowlOrLog, MsgType) ->
+   case esScanner:getLog() of
       true -> true;
       all -> true;
       none -> false;
@@ -335,3 +338,41 @@ getSystemModules() ->
          end
       end,
    lists:flatten([F(X) || X <- Apps]).
+
+%% 注意 map类型的数据不能当做key
+-type key() :: atom() | binary() | bitstring() | float() | integer() | list() | tuple().
+-type value() :: atom() | binary() | bitstring() | float() | integer() | list() | tuple() | map().
+
+-spec load(term(), [{key(), value()}]) -> ok.
+load(Module, KVs) ->
+   Forms = forms(Module, KVs),
+   {ok, Module, Bin} = compile:forms(Forms),
+   code:soft_purge(Module),
+   {module, Module} = code:load_binary(Module, atom_to_list(Module), Bin),
+   ok.
+
+forms(Module, KVs) ->
+   %% -module(Module).
+   Mod = erl_syntax:attribute(erl_syntax:atom(module), [erl_syntax:atom(Module)]),
+   %% -export([getv/0]).
+   ExportList = [erl_syntax:arity_qualifier(erl_syntax:atom(getv), erl_syntax:integer(1))],
+   Export = erl_syntax:attribute(erl_syntax:atom(export), [erl_syntax:list(ExportList)]),
+   %% getv(K) -> V
+   Function = erl_syntax:function(erl_syntax:atom(getv), lookup_clauses(KVs, [])),
+   [erl_syntax:revert(X) || X <- [Mod, Export, Function]].
+
+lookup_clause(Key, Value) ->
+   Var = erl_syntax:abstract(Key),
+   Body = erl_syntax:abstract(Value),
+   erl_syntax:clause([Var], [], [Body]).
+
+lookup_clause_anon() ->
+   Var = erl_syntax:variable("_"),
+   Body = erl_syntax:atom(undefined),
+   erl_syntax:clause([Var], [], [Body]).
+
+lookup_clauses([], Acc) ->
+   lists:reverse(lists:flatten([lookup_clause_anon() | Acc]));
+lookup_clauses([{Key, Value} | T], Acc) ->
+   lookup_clauses(T, [lookup_clause(Key, Value) | Acc]).
+

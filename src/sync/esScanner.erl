@@ -499,46 +499,50 @@ errorNoFile(Module) ->
 
 recompileSrcFile(SrcFile, _EnablePatching) ->
    %% Get the module, src dir, and options...
-   {ok, SrcDir} = esUtils:getSrcDir(SrcFile),
-   {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
+   case esUtils:getSrcDir(SrcFile) of
+      {ok, SrcDir} ->
+         {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
 
-   %% Get the old binary code...
-   OldBinary = getObjectCode(Module),
+         %% Get the old binary code...
+         OldBinary = getObjectCode(Module),
 
-   case getOptions(SrcDir) of
-      {ok, Options} ->
-         case CompileFun(SrcFile, [binary, return | Options]) of
-            {ok, Module, Binary, Warnings} ->
-               reloadIfNecessary(CompileFun, SrcFile, Module, OldBinary, Binary, Options, Warnings);
+         case getOptions(SrcDir) of
+            {ok, Options} ->
+               case CompileFun(SrcFile, [binary, return | Options]) of
+                  {ok, Module, Binary, Warnings} ->
+                     reloadIfNecessary(CompileFun, SrcFile, Module, OldBinary, Binary, Options, Warnings);
 
-            {ok, [{ok, Module, Binary, Warnings}], Warnings2} ->
-               reloadIfNecessary(CompileFun, SrcFile, Module, OldBinary, Binary, Options, Warnings ++ Warnings2);
+                  {ok, [{ok, Module, Binary, Warnings}], Warnings2} ->
+                     reloadIfNecessary(CompileFun, SrcFile, Module, OldBinary, Binary, Options, Warnings ++ Warnings2);
 
-            {ok, multiple, Results, Warnings} ->
-               Reloader =
-                  fun({CompiledModule, Binary}) ->
-                     {ok, _, _} = reloadIfNecessary(CompileFun, SrcFile, CompiledModule, OldBinary, Binary, Options, Warnings)
-                  end,
-               lists:foreach(Reloader, Results),
-               {ok, [], Warnings};
+                  {ok, multiple, Results, Warnings} ->
+                     Reloader =
+                        fun({CompiledModule, Binary}) ->
+                           {ok, _, _} = reloadIfNecessary(CompileFun, SrcFile, CompiledModule, OldBinary, Binary, Options, Warnings)
+                        end,
+                     lists:foreach(Reloader, Results),
+                     {ok, [], Warnings};
 
-            {ok, OtherModule, _Binary, Warnings} ->
-               Desc = io_lib:format("Module definition (~p) differs from expected (~s)", [OtherModule, filename:rootname(filename:basename(SrcFile))]),
+                  {ok, OtherModule, _Binary, Warnings} ->
+                     Desc = io_lib:format("Module definition (~p) differs from expected (~s)", [OtherModule, filename:rootname(filename:basename(SrcFile))]),
 
-               Errors = [{SrcFile, {0, Module, Desc}}],
-               printResults(Module, SrcFile, Errors, Warnings),
-               {ok, Errors, Warnings};
+                     Errors = [{SrcFile, {0, Module, Desc}}],
+                     printResults(Module, SrcFile, Errors, Warnings),
+                     {ok, Errors, Warnings};
 
-            {error, Errors, Warnings} ->
-               %% Compiling failed. Print the warnings and errors...
-               printResults(Module, SrcFile, Errors, Warnings),
-               {ok, Errors, Warnings}
+                  {error, Errors, Warnings} ->
+                     %% Compiling failed. Print the warnings and errors...
+                     printResults(Module, SrcFile, Errors, Warnings),
+                     {ok, Errors, Warnings}
+               end;
+            undefined ->
+               Msg = io_lib:format("Unable to determine options for ~p", [SrcFile]),
+               esUtils:log_errors(Msg)
          end;
-      undefined ->
-         Msg = io_lib:format("Unable to determine options for ~p", [SrcFile]),
+      _ ->
+         Msg = io_lib:format("not find the file ~p", [SrcFile]),
          esUtils:log_errors(Msg)
    end.
-
 
 printResults(Module, SrcFile, [], []) ->
    Msg = io_lib:format("~s:0: Recompiled.~n", [SrcFile]),

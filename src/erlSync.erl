@@ -5,15 +5,14 @@
    stop/0,
    run/0,
    pause/0,
-   info/0,
-   log/1,
-   log/0,
-   onsync/0,
-   onsync/1,
+   curInfo/0,
+   setLog/1,
+   getLog/0,
+   getOnsync/0,
+   setOnsync/0,
+   setOnsync/1,
    swSyncNode/1
 ]).
-
--define(VALID_GROWL_OR_LOG(X), is_boolean(X); is_list(X); X == all; X == none; X == skip_success).
 
 start() ->
    application:ensure_all_started(erlSync).
@@ -27,8 +26,8 @@ run() ->
          esScanner:unpause(),
          esScanner:rescan(),
          ok;
-      {error, _Reason} ->
-         io:format("Err")
+      {error, Reason} ->
+         esUtils:logErrors("start erlSync error ~p~n", [Reason])
    end.
 
 pause() ->
@@ -39,20 +38,23 @@ swSyncNode(IsSync) ->
    esScanner:swSyncNode(IsSync),
    ok.
 
-info() ->
-   esScanner:info().
+curInfo() ->
+   esScanner:curInfo().
 
-log(Val) when ?VALID_GROWL_OR_LOG(Val) ->
+setLog(Val) ->
    esScanner:setLog(Val).
 
-log() ->
+getLog() ->
    esScanner:getLog().
 
-onsync(Fun) ->
-   esScanner:setOnsync(Fun).
-
-onsync() ->
+getOnsync() ->
    esScanner:getOnsync().
+
+setOnsync() ->
+   esScanner:setOnsync(undefined).
+
+setOnsync(Fun) ->
+   esScanner:setOnsync(Fun).
 
 
 

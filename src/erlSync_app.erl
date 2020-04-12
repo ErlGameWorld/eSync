@@ -1,10 +1,4 @@
-%%%-------------------------------------------------------------------
-%% @doc erlSync public API
-%% @end
-%%%-------------------------------------------------------------------
-
 -module(erlSync_app).
-
 -behaviour(application).
 
 -export([start/2, stop/1]).
@@ -14,5 +8,3 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
    ok.
-
-%% internal functions

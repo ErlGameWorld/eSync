@@ -1,5 +1,4 @@
 -module(erlSync_sup).
-
 -behaviour(supervisor).
 
 -export([
@@ -23,6 +22,6 @@ start_link() ->
 %%                  type => worker(),       % optional
 %%                  modules => modules()}   % optional
 init([]) ->
-   SupFlags = #{strategy => rest_for_one, intensity => 1, period => 10},
-   ChildSpecs = [?ChildSpec(esOptions, worker), ?ChildSpec(esScanner, worker)],
+   SupFlags = #{strategy => one_for_one, intensity => 5, period => 10},
+   ChildSpecs = [?ChildSpec(esScanner, worker)],
    {ok, {SupFlags, ChildSpecs}}.

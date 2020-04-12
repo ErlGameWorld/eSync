@@ -1,23 +1,25 @@
 -module(esUtils).
+-include("erlSync.hrl").
 
 -compile(inline).
 -compile({inline_size, 128}).
 
 -export([
-   getSrcDirFromMod/1,
-   getOptionsFromMod/1,
+   getModSrcDir/1,
+   getModOptions/1,
    getFileType/1,
    getSrcDir/1,
    wildcard/2,
    getEnv/2,
    setEnv/2,
    load/2,
+   logSuccess/1,
+   logErrors/1,
+   logWarnings/1,
    getSystemModules/0
 ]).
 
--compile([export_all, nowarn_export_all]).
-
-getSrcDirFromMod(Module) ->
+getModSrcDir(Module) ->
    case code:is_loaded(Module) of
       {file, _} ->
          try
@@ -27,17 +29,15 @@ getSrcDirFromMod(Module) ->
             %% Ensure that the file exists, is a decendent of the tree, and how to deal with that
             IsFile = filelib:is_regular(Source),
             IsDescendant = isDescendent(Source),
-            NonDescendant = getEnv(non_descendant, fix),
+            Descendant = ?esCfgSync:getv(?descendant),
             LastSource =
-               case {IsFile, IsDescendant, NonDescendant} of
+               case {IsFile, IsDescendant, Descendant} of
                   %% is file and descendant, we're good to go
                   {true, true, _} -> Source;
                   %% is not a descendant, but we allow them, so good to go
                   {true, false, allow} -> Source;
-                  %% is not a file, but is a descendant, file is deleted, nothing we can do
-                  {false, true, _} -> undefined;
                   %% is not a descendant, and we fix non-descendants, so let's fix it
-                  {_, false, fix} -> fixDescendantSource(Source, IsFile);
+                  {_, false, fix} -> fixDescendantSource(Source);
                   %% Anything else, and we don't know what to do, so let's just bail.
                   _ -> undefined
                end,
@@ -56,7 +56,7 @@ getSrcDirFromMod(Module) ->
          undefined
    end.
 
-getOptionsFromMod(Module) ->
+getModOptions(Module) ->
    case code:is_loaded(Module) of
       {file, _} ->
          try
@@ -75,7 +75,7 @@ getOptionsFromMod(Module) ->
             {ok, Options6}
          catch ExType:Error:Stacktrace ->
             Msg = [io_lib:format("~p:0: ~p looking for options: ~p. Stack: ~p~n", [Module, ExType, Error, Stacktrace])],
-            log_warnings(Msg),
+            logWarnings(Msg),
             {ok, []}
          end;
       _ ->
@@ -95,7 +95,7 @@ transformAllIncludes(Module, BeamDir, Options) ->
    [transformInclude(Module, BeamDir, Opt) || Opt <- Options].
 
 transformInclude(Module, BeamDir, {i, IncludeDir}) ->
-   {ok, SrcDir} = getSrcDirFromMod(Module),
+   {ok, SrcDir} = getModSrcDir(Module),
    {ok, IncludeDir2} = determineIncludeDir(IncludeDir, BeamDir, SrcDir),
    {i, IncludeDir2};
 transformInclude(_, _, Other) ->
@@ -115,7 +115,7 @@ addFileType(Module, Options) ->
    Type = getFileType(Module),
    [{type, Type} | Options].
 
-%% @private This will check if the given module or source file is an ErlyDTL template.
+%% This will check if the given module or source file is an ErlyDTL template.
 %% Currently, this is done by checking if its reported source path ends with
 %% ".dtl.erl".
 getFileType(Module) when is_atom(Module) ->
@@ -135,7 +135,7 @@ getFileType(Source) when is_list(Source) ->
       ".ex" -> elixir
    end.
 
-%% @private This will search back to find an appropriate include directory, by
+%% This will search back to find an appropriate include directory, by
 %% searching further back than "..". Instead, it will extract the basename
 %% (probably "include" from the include pathfile, and then search backwards in
 %% the directory tree until it finds a directory with the same basename found
@@ -146,17 +146,16 @@ determineIncludeDir(IncludeDir, BeamDir, SrcDir) ->
       {ok, D} -> {ok, D};
       undefined ->
          {ok, Cwd} = file:get_cwd(),
-         Cwd2 = normalizeCaseWindowsDir(Cwd),
-         SrcDir2 = normalizeCaseWindowsDir(SrcDir),
-         IncludeBase2 = normalizeCaseWindowsDir(IncludeBase),
-         case findIncludeDirFromAncestors(Cwd2, IncludeBase2, SrcDir2) of
+         % Cwd2 = normalizeCaseWindowsDir(Cwd),
+         % SrcDir2 = normalizeCaseWindowsDir(SrcDir),
+         % IncludeBase2 = normalizeCaseWindowsDir(IncludeBase),
+         case findIncludeDirFromAncestors(Cwd, IncludeBase, SrcDir) of
             {ok, D} -> {ok, D};
             undefined -> {ok, IncludeDir} %% Failed, just stick with original
          end
    end.
 
-%% @private First try to see if we have an include file alongside our ebin
-%directory, which is typically the case
+%% First try to see if we have an include file alongside our ebin directory, which is typically the case
 determineIncludeDirFromBeamDir(IncludeBase, BeamDir) ->
    BeamBasedIncDir = filename:join(filename:dirname(BeamDir), IncludeBase),
    case filelib:is_dir(BeamBasedIncDir) of
@@ -164,8 +163,7 @@ determineIncludeDirFromBeamDir(IncludeBase, BeamDir) ->
       false -> undefined
    end.
 
-%% @private Then we dig back through the parent directories until we find our
-%include directory
+%% Then we dig back through the parent directories until we find our include directory
 findIncludeDirFromAncestors(Cwd, _, Cwd) -> undefined;
 findIncludeDirFromAncestors(_, _, "/") -> undefined;
 findIncludeDirFromAncestors(_, _, ".") -> undefined;
@@ -179,26 +177,26 @@ findIncludeDirFromAncestors(Cwd, IncludeBase, Dir) ->
          findIncludeDirFromAncestors(Cwd, IncludeBase, filename:dirname(Dir))
    end.
 
-normalizeCaseWindowsDir(Dir) ->
-   case os:type() of
-      {win32, _} -> string:to_lower(Dir);
-      {unix, _} -> Dir
-   end.
+% normalizeCaseWindowsDir(Dir) ->
+%    case os:type() of
+%       {win32, _} -> Dir; %string:to_lower(Dir);
+%       {unix, _} -> Dir
+%    end.
 
-%% @private This is an attempt to intelligently fix paths in modules when a
+%% This is an attempt to intelligently fix paths in modules when a
 %% release is moved.  Essentially, it takes a module name and its original path
 %% from Module:module_info(compile), say
 %% "/some/original/path/site/src/pages/somepage.erl", and then breaks down the
 %% path one by one prefixing it with the current working directory until it
 %% either finds a match, or fails.  If it succeeds, it returns the Path to the
 %% new Source file.
-fixDescendantSource([], _IsFile) ->
+fixDescendantSource([]) ->
    undefined;
-fixDescendantSource(Path, IsFile) ->
-   PathParts = filename:split(Path),
+fixDescendantSource(Path) ->
    {ok, Cwd} = file:get_cwd(),
+   PathParts = filename:split(Path),
    case makeDescendantSource(Cwd, PathParts) of
-      undefined -> useOriginalIfExists(Path, IsFile);
+      undefined -> Path;
       FoundPath -> FoundPath
    end.
 
@@ -211,14 +209,6 @@ makeDescendantSource(Cwd, [_ | T]) ->
       false -> makeDescendantSource(Cwd, T)
    end.
 
-useOriginalIfExists(Path, IsFile) ->
-   case IsFile of
-      true -> Path;
-      false -> undefined
-   end.
-
-%% @private returns true if the provided path is a descendant of the current
-%% working directory.
 isDescendent(Path) ->
    {ok, Cwd} = file:get_cwd(),
    lists:sublist(Path, length(Cwd)) == Cwd.
@@ -240,11 +230,10 @@ getSrcDir(Dir, Ctr) ->
       true -> getSrcDir(filename:dirname(Dir), Ctr - 1)
    end.
 
-%% @private Return all files in a directory matching a regex.
+%% Return all files in a directory matching a regex.
 wildcard(Dir, Regex) ->
    filelib:fold_files(Dir, Regex, true, fun(Y, Acc) -> [Y | Acc] end, []).
 
-%% @private Get an environment variable.
 getEnv(Var, Default) ->
    case application:get_env(erlSync, Var) of
       {ok, Value} ->
@@ -253,26 +242,19 @@ getEnv(Var, Default) ->
          Default
    end.
 
-%% @private Set a erlSync environment variable.
 setEnv(Var, Val) ->
    ok = application:set_env(erlSync, Var, Val).
 
-log_success(Message) ->
-   can_we_log(success)
-      andalso error_logger:info_msg(lists:flatten(Message)).
+logSuccess(Message) ->
+   canLog(success) andalso error_logger:info_msg(lists:flatten(Message)).
 
-log_errors(Message) ->
-   can_we_log(errors)
-      andalso error_logger:error_msg(lists:flatten(Message)).
+logErrors(Message) ->
+   canLog(errors) andalso error_logger:error_msg(lists:flatten(Message)).
 
-log_warnings(Message) ->
-   can_we_log(warnings)
-      andalso error_logger:warning_msg(lists:flatten(Message)).
+logWarnings(Message) ->
+   canLog(warnings) andalso error_logger:warning_msg(lists:flatten(Message)).
 
-can_we_log(MsgType) ->
-   can_we_notify(log, MsgType).
-
-can_we_notify(_GrowlOrLog, MsgType) ->
+canLog(MsgType) ->
    case esScanner:getLog() of
       true -> true;
       all -> true;
@@ -283,61 +265,24 @@ can_we_notify(_GrowlOrLog, MsgType) ->
       _ -> false
    end.
 
-%% @private Return a list of all modules that belong to Erlang rather
-%% than whatever application we may be running.
+%% Return a list of all modules that belong to Erlang rather than whatever application we may be running.
 getSystemModules() ->
    Apps = [
-      appmon,
-      asn1,
-      common_test,
-      compiler,
-      crypto,
-      debugger,
-      dialyzer,
-      docbuilder,
-      edoc,
-      erl_interface,
-      erts,
-      et,
-      eunit,
-      gs,
-      hipe,
-      inets,
-      inets,
-      inviso,
-      jinterface,
-      kernel,
-      mnesia,
-      observer,
-      orber,
-      os_mon,
-      parsetools,
-      percept,
-      pman,
-      reltool,
-      runtime_tools,
-      sasl,
-      snmp,
-      ssl,
-      stdlib,
-      syntax_tools,
-      test_server,
-      toolbar,
-      tools,
-      tv,
-      webtool,
-      wx,
-      xmerl,
-      zlib
+      appmon, asn1, common_test, compiler, crypto, debugger,
+      dialyzer, docbuilder, edoc, erl_interface, erts, et,
+      eunit, gs, hipe, inets, inets, inviso, jinterface, kernel,
+      mnesia, observer, orber, os_mon, parsetools, percept, pman,
+      reltool, runtime_tools, sasl, snmp, ssl, stdlib, syntax_tools,
+      test_server, toolbar, tools, tv, webtool, wx, xmerl, zlib
    ],
-   F =
+   FAppMod =
       fun(App) ->
          case application:get_key(App, modules) of
             {ok, Modules} -> Modules;
             _Other -> []
          end
       end,
-   lists:flatten([F(X) || X <- Apps]).
+   lists:flatten([FAppMod(X) || X <- Apps]).
 
 %% 注意 map类型的数据不能当做key
 -type key() :: atom() | binary() | bitstring() | float() | integer() | list() | tuple().

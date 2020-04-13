@@ -26,10 +26,10 @@
         {erlSync，
     	    [
     	        {moduleTime, 30000},
-                    {srcDirTime, 5000},
-                    {srcFileTime, 5000},
-                    {compareBeamTime, 3000},
-                    {compareSrcFileTime, 3000}, 
+                    {srcDirTime, 6000},
+                    {srcFileTime, 6000},
+                    {compareBeamTime, 4000},
+                    {compareSrcFileTime, 4000}, 
                     {srcDirs, undefined}
                     {log, all},     
                     {descendant, fix},

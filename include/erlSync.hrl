@@ -12,7 +12,7 @@
 -define(onlyMods, onlyMods).
 -define(excludedMods, excludedMods).
 -define(descendant, descendant).
--define(CfgList, [{?Log, all}, {?moduleTime, 30000}, {?srcDirTime, 5000}, {?srcFileTime, 5000}, {?compareBeamTime, 3000}, {?compareSrcFileTime, 3000}, {?srcDirs, undefined}, {?onlyMods, []}, {?excludedMods, []}, {?descendant, fix}]).
+-define(CfgList, [{?Log, all}, {?moduleTime, 30000}, {?srcDirTime, 6000}, {?srcFileTime, 6000}, {?compareBeamTime, 4000}, {?compareSrcFileTime, 4000}, {?srcDirs, undefined}, {?onlyMods, []}, {?excludedMods, []}, {?descendant, fix}]).
 
 -define(esCfgSync, esCfgSync).
 

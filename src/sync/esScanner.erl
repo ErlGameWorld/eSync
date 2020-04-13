@@ -296,9 +296,8 @@ syncLoadModOnAllNodes(Module) ->
    {Module, Binary, _} = code:get_object_code(Module),
    FSync =
       fun(Node) ->
-         io:format("[~s:~p] DEBUG - Node: ~p", [?MODULE, ?LINE, Node]),
-         Msg = io_lib:format("Reloading '~s' on ~s", [Module, Node]),
-         esUtils:logSuccess(Msg),
+         MsgNode = io_lib:format("Reloading '~s' on ~p", [Module, Node]),
+         esUtils:logSuccess(MsgNode),
          rpc:call(Node, code, ensure_loaded, [Module]),
          case rpc:call(Node, code, which, [Module]) of
             Filename when is_binary(Filename) orelse is_list(Filename) ->
@@ -308,7 +307,7 @@ syncLoadModOnAllNodes(Module) ->
 
                case rpc:call(Node, code, load_file, [Module]) of
                   {module, Module} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Success on node:~p", [Node, Module]),
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Success on node:~p", [Module, Node]),
                      esUtils:logSuccess(Msg);
                   {error, What} ->
                      Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Errors on node:~p Reason:~p", [Module, Node, What]),
@@ -318,7 +317,7 @@ syncLoadModOnAllNodes(Module) ->
                %% File doesn't exist, just load into VM.
                case rpc:call(Node, code, load_binary, [Module, undefined, Binary]) of
                   {module, Module} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success on node:~p", [Node, Module]),
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success on node:~p", [Module, Node]),
                      esUtils:logSuccess(Msg);
                   {error, What} ->
                      Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors on node:~p Reason:~p", [Module, Node, What]),
@@ -466,11 +465,11 @@ recompileSrcFile(SrcFile, _SwSyncNode) ->
                      {ok, Errors, Warnings}
                end;
             undefined ->
-               Msg = io_lib:format("Unable to determine options for ~p", [SrcFile]),
+               Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
                esUtils:logErrors(Msg)
          end;
       _ ->
-         Msg = io_lib:format("not find the file ~p", [SrcFile]),
+         Msg = io_lib:format("not find the file ~s", [SrcFile]),
          esUtils:logErrors(Msg)
    end.
 
@@ -480,7 +479,6 @@ printResults(_Module, SrcFile, [], []) ->
 printResults(_Module, SrcFile, [], Warnings) ->
    Msg = [formatErrors(SrcFile, [], Warnings), io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)])],
    esUtils:logWarnings(Msg);
-
 printResults(_Module, SrcFile, Errors, Warnings) ->
    Msg = [formatErrors(SrcFile, Errors, Warnings)],
    esUtils:logErrors(Msg).
@@ -544,7 +542,8 @@ warnDelHrlFiles(HrlFile, SrcFiles) ->
    case WhoInclude of
       [] -> ok;
       _ ->
-         Msg = io_lib:format("Warning. Deleted ~p file included in existing src files: ~p", [filename:basename(HrlFile), lists:map(fun(File) -> filename:basename(File) end, WhoInclude)]),
+         Msg = io_lib:format("Warning. Deleted ~p file included in existing src files: ~p", [filename:basename(HrlFile), lists:map(fun(File) ->
+            filename:basename(File) end, WhoInclude)]),
          esUtils:logSuccess(lists:flatten(Msg))
    end.
 
@@ -664,7 +663,18 @@ setOptions(SrcDir, Options) ->
       undefined ->
          erlang:put(SrcDir, Options);
       OldOptions ->
-         NewOptions = lists:usort(Options ++ OldOptions),
+         NewOptions =
+            case lists:keytake(compile_info, 1, Options) of
+               {value, {compile_info, ValList1}, Options1} ->
+                  case lists:keytake(compile_info, 1, OldOptions) of
+                     {value, {compile_info, ValList2}, Options2} ->
+                        [{compile_info, lists:usort(ValList1 ++ ValList2)} | lists:usort(Options1 ++ Options2)];
+                     _ ->
+                        lists:usort(Options ++ OldOptions)
+                  end;
+               _ ->
+                  lists:usort(Options ++ OldOptions)
+            end,
          erlang:put(SrcDir, NewOptions)
    end.
 

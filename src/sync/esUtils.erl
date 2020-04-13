@@ -37,7 +37,7 @@ getModSrcDir(Module) ->
                   %% is not a descendant, but we allow them, so good to go
                   {true, false, allow} -> Source;
                   %% is not a descendant, and we fix non-descendants, so let's fix it
-                  {_, false, fix} -> fixDescendantSource(Source);
+                  {_, false, fix} -> fixDescendantSource(Source, IsFile);
                   %% Anything else, and we don't know what to do, so let's just bail.
                   _ -> undefined
                end,
@@ -102,7 +102,7 @@ transformInclude(_, _, Other) ->
    Other.
 
 maybeAddCompileInfo(Options) ->
-   case lists:member(predetermined, Options) of
+   case lists:member(compile_info, Options) of
       true -> Options;
       false -> addCompileInfo(Options)
    end.
@@ -142,7 +142,7 @@ getFileType(Source) when is_list(Source) ->
 %% above.
 determineIncludeDir(IncludeDir, BeamDir, SrcDir) ->
    IncludeBase = filename:basename(IncludeDir),
-   case determineIncludeDirFromBeamDir(IncludeBase, BeamDir) of
+   case determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) of
       {ok, D} -> {ok, D};
       undefined ->
          {ok, Cwd} = file:get_cwd(),
@@ -156,11 +156,17 @@ determineIncludeDir(IncludeDir, BeamDir, SrcDir) ->
    end.
 
 %% First try to see if we have an include file alongside our ebin directory, which is typically the case
-determineIncludeDirFromBeamDir(IncludeBase, BeamDir) ->
+determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) ->
    BeamBasedIncDir = filename:join(filename:dirname(BeamDir), IncludeBase),
    case filelib:is_dir(BeamBasedIncDir) of
       true -> {ok, BeamBasedIncDir};
-      false -> undefined
+      false ->
+         BeamBasedIncDir2 = filename:join(filename:dirname(BeamDir), IncludeDir),
+         case filelib:is_dir(BeamBasedIncDir2) of
+            true -> {ok, BeamBasedIncDir2};
+            _ ->
+               undefined
+         end
    end.
 
 %% Then we dig back through the parent directories until we find our include directory
@@ -190,13 +196,13 @@ findIncludeDirFromAncestors(Cwd, IncludeBase, Dir) ->
 %% path one by one prefixing it with the current working directory until it
 %% either finds a match, or fails.  If it succeeds, it returns the Path to the
 %% new Source file.
-fixDescendantSource([]) ->
+fixDescendantSource([], _IsFile) ->
    undefined;
-fixDescendantSource(Path) ->
+fixDescendantSource(Path, IsFile) ->
    {ok, Cwd} = file:get_cwd(),
    PathParts = filename:split(Path),
    case makeDescendantSource(Cwd, PathParts) of
-      undefined -> Path;
+      undefined -> case IsFile of true -> Path; _ -> undefined end;
       FoundPath -> FoundPath
    end.
 

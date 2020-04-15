@@ -165,9 +165,9 @@ handleCast(miCompareSrcFiles, running, #state{srcFiles = SrcFiles, srcFileTimes 
    atomics:put(persistent_term:get(?esRecompileCnt), 1, 0),
    %% Create a list of file lastmod times...
    SrcFileTimeList = [{Src, LastMod} || Src <- SrcFiles, LastMod <- [filelib:last_modified(Src)], LastMod =/= 0],
-   NewSrcFileLastMod = lists:usort(SrcFileTimeList),
+   %% NewSrcFileLastMod = lists:usort(SrcFileTimeList),
    %% Compare to previous results, if there are changes, then recompile the file...
-   recompileChangeSrcFile(SrcFileTimes, NewSrcFileLastMod, SwSyncNode),
+   recompileChangeSrcFile(SrcFileTimes, SrcFileTimeList, SwSyncNode),
    case atomics:get(persistent_term:get(?esRecompileCnt), 1) > 0 of
       true ->
          gen_ipc:cast(?SERVER, miCompareBeams);
@@ -175,14 +175,14 @@ handleCast(miCompareSrcFiles, running, #state{srcFiles = SrcFiles, srcFileTimes 
          ignore
    end,
    Time = ?esCfgSync:getv(?compareSrcFileTime),
-   {keepStatus, State#state{srcFileTimes = NewSrcFileLastMod}, [?gTimeout(miCompareSrcFiles, Time)]};
+   {keepStatus, State#state{srcFileTimes = SrcFileTimeList}, [?gTimeout(miCompareSrcFiles, Time)]};
 handleCast(miCompareHrlFiles, running, #state{hrlFiles = HrlFiles, srcFiles = SrcFiles, hrlFileTimes = HrlFileTimes, swSyncNode = SwSyncNode} = State) ->
    atomics:put(persistent_term:get(?esRecompileCnt), 1, 0),
    %% Create a list of file lastmod times...
    HrlFileTimeList = [{Hrl, LastMod} || Hrl <- HrlFiles, LastMod <- [filelib:last_modified(Hrl)], LastMod =/= 0],
-   NewHrlFileLastMod = lists:usort(HrlFileTimeList),
+   %% NewHrlFileLastMod = lists:usort(HrlFileTimeList),
    %% Compare to previous results, if there are changes, then recompile src files that depends
-   recompileChangeHrlFile(HrlFileTimes, NewHrlFileLastMod, SrcFiles, SwSyncNode),
+   recompileChangeHrlFile(HrlFileTimes, HrlFileTimeList, SrcFiles, SwSyncNode),
    case atomics:get(persistent_term:get(?esRecompileCnt), 1) > 0 of
       true ->
          gen_ipc:cast(?SERVER, miCompareBeams);
@@ -190,7 +190,7 @@ handleCast(miCompareHrlFiles, running, #state{hrlFiles = HrlFiles, srcFiles = Sr
          ignore
    end,
    Time = ?esCfgSync:getv(?compareSrcFileTime),
-   {keepStatus, State#state{hrlFileTimes = NewHrlFileLastMod}, [?gTimeout(miCompareHrlFiles, Time)]};
+   {keepStatus, State#state{hrlFileTimes = HrlFileTimeList}, [?gTimeout(miCompareHrlFiles, Time)]};
 handleCast({miSyncNode, IsSync}, _, State) ->
    case IsSync of
       true ->

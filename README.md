@@ -1,4 +1,5 @@
 # erlSync
+    otp21.2+
 改造自 [sync](https://github.com/rustyio/sync) 有兴趣可以了解一下, 本项目仅仅在此基础做了一些封装改动和优化，工作原理并无差别 
 # 工作原理
     启动后，Sync会收集有关已加载模块，ebin目录，源文件，编译选项等的信息。

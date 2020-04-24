@@ -16,7 +16,8 @@
    logSuccess/1,
    logErrors/1,
    logWarnings/1,
-   getSystemModules/0
+   getSystemModules/0,
+   tryGetModOptions/1
 ]).
 
 getModSrcDir(Module) ->
@@ -81,6 +82,26 @@ getModOptions(Module) ->
       _ ->
          {ok, []}
    end.
+
+tryGetModOptions(Module) ->
+   try
+      Props = Module:module_info(compile),
+      BeamDir = filename:dirname(code:which(Module)),
+      Options1 = proplists:get_value(options, Props, []),
+      %% transform `outdir'
+      Options2 = transformOutdir(BeamDir, Options1),
+      Options3 = ensureInclude(Options2),
+      %% transform the include directories
+      Options4 = transformAllIncludes(Module, BeamDir, Options3),
+      %% maybe_add_compile_info
+      Options5 = maybeAddCompileInfo(Options4),
+      %% add filetype to options (DTL, LFE, erl, etc)
+      Options6 = addFileType(Module, Options5),
+      {ok, Options6}
+   catch _ExType:_Error:_Stacktrace ->
+      undefiend
+   end.
+
 
 transformOutdir(BeamDir, Options) ->
    [{outdir, BeamDir} | proplists:delete(outdir, Options)].

@@ -434,7 +434,7 @@ errorNoFile(Module) ->
    Msg = io_lib:format("~p Couldn't load module: nofile", [Module]),
    esUtils:logWarnings([Msg]).
 
-recompileSrcFile(SrcFile, _SwSyncNode) ->
+recompileSrcFile(SrcFile, SwSyncNode) ->
    %% Get the module, src dir, and options...
    case esUtils:getSrcDir(SrcFile) of
       {ok, SrcDir} ->
@@ -465,8 +465,14 @@ recompileSrcFile(SrcFile, _SwSyncNode) ->
                      {ok, Errors, Warnings}
                end;
             undefined ->
-               Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
-               esUtils:logErrors(Msg)
+               case esUtils:tryGetModOptions(Module) of
+                  {ok, Options} ->
+                     setOptions(SrcDir, Options),
+                     recompileSrcFile(SrcFile, SwSyncNode);
+                  _ ->
+                     Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
+                     esUtils:logErrors(Msg)
+               end
          end;
       _ ->
          Msg = io_lib:format("not find the file ~s", [SrcFile]),

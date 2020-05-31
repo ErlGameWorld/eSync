@@ -118,17 +118,17 @@ handleCall({miSetOnsync, Fun}, _, State, _From) ->
 handleCall(miCurInfo, _, State, _Form) ->
    {reply, {erlang:get(), State}, State};
 handleCall(_Request, _, _State, _From) ->
-   keepStatusState.
+   kpS_S.
 
 handleCast(miPause, _, State) ->
-   {nextStatus, pause, State};
+   {nextS, pause, State};
 handleCast(miUnpause, _, State) ->
-   {nextStatus, running, State};
+   {nextS, running, State};
 handleCast(miCollMods, running, State) ->
    AllModules = (erlang:loaded() -- esUtils:getSystemModules()),
    LastCollMods = filterCollMods(AllModules),
    Time = ?esCfgSync:getv(?moduleTime),
-   {keepStatus, State#state{modules = LastCollMods}, [?gTimeout(miCollMods, Time)]};
+   {kpS, State#state{modules = LastCollMods}, [?gTimeout(miCollMods, Time)]};
 handleCast(miCollSrcDirs, running, #state{modules = Modules} = State) ->
    {USortedSrcDirs, USortedHrlDirs} =
       case ?esCfgSync:getv(srcDirs) of
@@ -141,7 +141,7 @@ handleCast(miCollSrcDirs, running, #state{modules = Modules} = State) ->
       end,
 
    Time = ?esCfgSync:getv(?srcDirTime),
-   {keepStatus, State#state{srcDirs = USortedSrcDirs, hrlDirs = USortedHrlDirs}, [?gTimeout(miCollSrcDirs, Time)]};
+   {kpS, State#state{srcDirs = USortedSrcDirs, hrlDirs = USortedHrlDirs}, [?gTimeout(miCollSrcDirs, Time)]};
 handleCast(miCollSrcFiles, running, #state{hrlDirs = HrlDirs, srcDirs = SrcDirs} = State) ->
    FSrc =
       fun(Dir, Acc) ->
@@ -154,13 +154,13 @@ handleCast(miCollSrcFiles, running, #state{hrlDirs = HrlDirs, srcDirs = SrcDirs}
       end,
    HrlFiles = lists:usort(lists:foldl(FHrl, [], HrlDirs)),
    Time = ?esCfgSync:getv(?srcFileTime),
-   {keepStatus, State#state{srcFiles = SrcFiles, hrlFiles = HrlFiles}, [?gTimeout(miCollSrcFiles, Time)]};
+   {kpS, State#state{srcFiles = SrcFiles, hrlFiles = HrlFiles}, [?gTimeout(miCollSrcFiles, Time)]};
 handleCast(miCompareBeams, running, #state{modules = Modules, beamTimes = BeamTimes, onsyncFun = OnsyncFun, swSyncNode = SwSyncNode} = State) ->
    BeamTimeList = [{Mod, LastMod} || Mod <- Modules, LastMod <- [modLastmod(Mod)], LastMod =/= 0],
    NewBeamLastMod = lists:usort(BeamTimeList),
    reloadChangedMod(BeamTimes, NewBeamLastMod, SwSyncNode, OnsyncFun, []),
    Time = ?esCfgSync:getv(?compareBeamTime),
-   {keepStatus, State#state{beamTimes = NewBeamLastMod}, [?gTimeout(miCompareBeams, Time)]};
+   {kpS, State#state{beamTimes = NewBeamLastMod}, [?gTimeout(miCompareBeams, Time)]};
 handleCast(miCompareSrcFiles, running, #state{srcFiles = SrcFiles, srcFileTimes = SrcFileTimes, swSyncNode = SwSyncNode} = State) ->
    atomics:put(persistent_term:get(?esRecompileCnt), 1, 0),
    %% Create a list of file lastmod times...
@@ -175,7 +175,7 @@ handleCast(miCompareSrcFiles, running, #state{srcFiles = SrcFiles, srcFileTimes 
          ignore
    end,
    Time = ?esCfgSync:getv(?compareSrcFileTime),
-   {keepStatus, State#state{srcFileTimes = SrcFileTimeList}, [?gTimeout(miCompareSrcFiles, Time)]};
+   {kpS, State#state{srcFileTimes = SrcFileTimeList}, [?gTimeout(miCompareSrcFiles, Time)]};
 handleCast(miCompareHrlFiles, running, #state{hrlFiles = HrlFiles, srcFiles = SrcFiles, hrlFileTimes = HrlFileTimes, swSyncNode = SwSyncNode} = State) ->
    atomics:put(persistent_term:get(?esRecompileCnt), 1, 0),
    %% Create a list of file lastmod times...
@@ -190,24 +190,24 @@ handleCast(miCompareHrlFiles, running, #state{hrlFiles = HrlFiles, srcFiles = Sr
          ignore
    end,
    Time = ?esCfgSync:getv(?compareSrcFileTime),
-   {keepStatus, State#state{hrlFileTimes = HrlFileTimeList}, [?gTimeout(miCompareHrlFiles, Time)]};
+   {kpS, State#state{hrlFileTimes = HrlFileTimeList}, [?gTimeout(miCompareHrlFiles, Time)]};
 handleCast({miSyncNode, IsSync}, _, State) ->
    case IsSync of
       true ->
-         {keepStatus, State#state{swSyncNode = true}};
+         {kpS, State#state{swSyncNode = true}};
       _ ->
-         {keepStatus, State#state{swSyncNode = false}}
+         {kpS, State#state{swSyncNode = false}}
    end;
 handleCast(_Msg, _, _State) ->
-   keepStatusState.
+   kpS_S.
 
 handleInfo(_Msg, _, _State) ->
-   keepStatusState.
+   kpS_S.
 
 handleOnevent({gTimeout, _}, Msg, Status, State) ->
    handleCast(Msg, Status, State);
 handleOnevent(_EventType, _EventContent, _Status, _State) ->
-   keepStatusState.
+   kpS_S.
 
 terminate(_Reason, _Status, _State) ->
    ok.

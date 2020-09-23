@@ -1,6 +1,6 @@
 -define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
 
--define(gTimeout(Type, Time), {{gTimeout, Type}, Time, Type}).
+-define(gTimeout(Type, Time), {gTimeout, doSync, Time, Type}).
 
 -define(Log, log).
 -define(moduleTime, moduleTime).

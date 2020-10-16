@@ -196,12 +196,18 @@ findIncludeDirFromAncestors(_, _, "/") -> undefined;
 findIncludeDirFromAncestors(_, _, ".") -> undefined;
 findIncludeDirFromAncestors(_, _, "") -> undefined;
 findIncludeDirFromAncestors(Cwd, IncludeBase, Dir) ->
-   AttemptDir = filename:join(filename:dirname(Dir), IncludeBase),
+   NewDirName = filename:dirname(Dir),
+   AttemptDir = filename:join(NewDirName, IncludeBase),
    case filelib:is_dir(AttemptDir) of
       true ->
          {ok, AttemptDir};
       false ->
-         findIncludeDirFromAncestors(Cwd, IncludeBase, filename:dirname(Dir))
+         case NewDirName =/= Dir of
+            true ->
+               findIncludeDirFromAncestors(Cwd, IncludeBase, NewDirName);
+            _ ->
+               undefined
+         end
    end.
 
 % normalizeCaseWindowsDir(Dir) ->
@@ -300,7 +306,7 @@ getSystemModules() ->
       eunit, gs, hipe, inets, inets, inviso, jinterface, kernel,
       mnesia, observer, orber, os_mon, parsetools, percept, pman,
       reltool, runtime_tools, sasl, snmp, ssl, stdlib, syntax_tools,
-      test_server, toolbar, tools, tv, webtool, wx, xmerl, zlib
+      test_server, toolbar, tools, tv, webtool, wx, xmerl, zlib, rebar, rebar3
    ],
    FAppMod =
       fun(App) ->

@@ -170,7 +170,7 @@ determineIncludeDir(IncludeDir, BeamDir, SrcDir) ->
          % Cwd2 = normalizeCaseWindowsDir(Cwd),
          % SrcDir2 = normalizeCaseWindowsDir(SrcDir),
          % IncludeBase2 = normalizeCaseWindowsDir(IncludeBase),
-         case findIncludeDirFromAncestors(Cwd, IncludeBase, SrcDir) of
+         case findIncludeDirFromAncestors(SrcDir, Cwd, IncludeBase) of
             {ok, D} -> {ok, D};
             undefined -> {ok, IncludeDir} %% Failed, just stick with original
          end
@@ -191,11 +191,11 @@ determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) ->
    end.
 
 %% Then we dig back through the parent directories until we find our include directory
-findIncludeDirFromAncestors(Cwd, _, Cwd) -> undefined;
-findIncludeDirFromAncestors(_, _, "/") -> undefined;
-findIncludeDirFromAncestors(_, _, ".") -> undefined;
-findIncludeDirFromAncestors(_, _, "") -> undefined;
-findIncludeDirFromAncestors(Cwd, IncludeBase, Dir) ->
+findIncludeDirFromAncestors(Cwd, Cwd, _) -> undefined;
+findIncludeDirFromAncestors("/", _, _) -> undefined;
+findIncludeDirFromAncestors( ".", _, _) -> undefined;
+findIncludeDirFromAncestors( "", _, _) -> undefined;
+findIncludeDirFromAncestors(Dir, Cwd, IncludeBase) ->
    NewDirName = filename:dirname(Dir),
    AttemptDir = filename:join(NewDirName, IncludeBase),
    case filelib:is_dir(AttemptDir) of
@@ -204,7 +204,7 @@ findIncludeDirFromAncestors(Cwd, IncludeBase, Dir) ->
       false ->
          case NewDirName =/= Dir of
             true ->
-               findIncludeDirFromAncestors(Cwd, IncludeBase, NewDirName);
+               findIncludeDirFromAncestors(NewDirName, Cwd, IncludeBase);
             _ ->
                undefined
          end

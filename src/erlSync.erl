@@ -27,7 +27,8 @@ run() ->
          esScanner:rescan(),
          ok;
       {error, Reason} ->
-         esUtils:logErrors("start erlSync error ~p~n", [Reason])
+         Msg = io_lib:format("start erlSync error ~p~n", [Reason]),
+         esUtils:logErrors(Msg)
    end.
 
 pause() ->

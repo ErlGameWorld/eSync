@@ -204,7 +204,7 @@ handleCast(_Msg, _, _State) ->
 handleInfo(_Msg, _, _State) ->
    kpS_S.
 
-handleOnevent(doSync, Msg, Status, State) ->
+handleOnevent({doSync, _}, Msg, Status, State) ->
    handleCast(Msg, Status, State);
 handleOnevent(_EventType, _EventContent, _Status, _State) ->
    kpS_S.

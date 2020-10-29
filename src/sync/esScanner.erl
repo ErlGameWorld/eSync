@@ -24,6 +24,7 @@
 -export([
    init/1,
    handleCall/4,
+   handleAfter/3,
    handleCast/3,
    handleInfo/3,
    handleOnevent/4,
@@ -44,6 +45,8 @@
    , srcFileTimes = undefined :: [{file:filename(), timestamp()}] | undefined
    , onsyncFun = undefined
    , swSyncNode = false
+   , sockMod
+   , sock
 }).
 
 %% ************************************  API start ***************************
@@ -98,7 +101,7 @@ setOnsync(Fun) ->
 start_link() ->
    gen_ipc:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-%% status :: running | pause
+%% status :: waiting | running | pause
 init([]) ->
    erlang:process_flag(trap_exit, true),
    loadCfg(),
@@ -109,7 +112,28 @@ init([]) ->
       _ ->
          ignore
    end,
-   {ok, running, #state{}}.
+   {ok, waiting, #state{}, {doAfter, 0}}.
+
+handleAfter(_, waiting, State) ->
+   %% 启动tcp 异步监听 然后启动文件同步应用 启动定时器  等待建立连接 超时 就表示文件同步应用启动失败了 报错
+   ListenPort = ?esCfgSync:getv(?listenPort),
+   case gen_tcp:listen(ListenPort, ?TCP_DEFAULT_OPTIONS) of
+      {ok, LSock} ->
+         os:cmd("./priv/fileSync \"./\"" ++ integer_to_list(ListenPort)),
+         case prim_inet:async_accept(LSock, -1) of
+            {ok, _Ref} ->
+               {ok, SockMod} = inet_db:lookup_socket(LSock),
+               {kpS, State#state{sockMod = SockMod}, {sTimeout, 2000}};
+            {error, Reason} ->
+               Msg = io_lib:format("init prim_inet:async_accept error ~p~n", [Reason]),
+               esUtils:logErrors(Msg),
+               {kpS, State, {sTimeout, 2000}}
+         end;
+      {error, Reason} ->
+         Msg = io_lib:format("failed to listen on ~p - ~p (~s) ~n", [ListenPort, Reason, inet:format_error(Reason)]),
+         esUtils:logErrors(Msg),
+         {kpS, State, {sTimeout, 2000}}
+   end.
 
 handleCall(miGetOnsync, _, #state{onsyncFun = OnSync} = State, _From) ->
    {reply, OnSync, State};
@@ -201,6 +225,27 @@ handleCast({miSyncNode, IsSync}, _, State) ->
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
+handleInfo({inet_async, _LSock, _Ref, Msg}, waiting, #state{sockMod = SockMod} = State) ->
+   case Msg of
+      {ok, Sock} ->
+         %% make it look like gen_tcp:accept
+         inet_db:register_socket(Sock, SockMod),
+         {nextS, running, State#state{sock = Sock}};
+      {error, closed} ->
+         Msg = io_lib:format("error, closed listen sock error ~p~n",[closed]),
+         esUtils:logErrors(Msg),
+         {stop, normal};
+      {error, Reason} ->
+         Msg = io_lib:format("listen sock error ~p~n",[Reason]),
+         esUtils:logErrors(Msg),
+         {stop, {lsock, Reason}}
+   end;
+handleInfo({tcp, Socket, Data}, running, State) ->
+   kpS_S;
+handleInfo({tcp_closed, Socket}, running, State) ->
+   kpS_S;
+handleInfo({tcp_error, Socket, Reason},running, State) ->
+   kpS_S;
 handleInfo(_Msg, _, _State) ->
    kpS_S.
 

@@ -228,18 +228,18 @@ fixDescendantSource([], _IsFile) ->
 fixDescendantSource(Path, IsFile) ->
    {ok, Cwd} = file:get_cwd(),
    PathParts = filename:split(Path),
-   case makeDescendantSource(Cwd, PathParts) of
+   case makeDescendantSource(PathParts, Cwd) of
       undefined -> case IsFile of true -> Path; _ -> undefined end;
       FoundPath -> FoundPath
    end.
 
-makeDescendantSource(_Cwd, []) ->
+makeDescendantSource([], _Cwd) ->
    undefined;
-makeDescendantSource(Cwd, [_ | T]) ->
+makeDescendantSource([_ | T], Cwd) ->
    PathAttempt = filename:join([Cwd | T]),
    case filelib:is_regular(PathAttempt) of
       true -> PathAttempt;
-      false -> makeDescendantSource(Cwd, T)
+      false -> makeDescendantSource(T, Cwd)
    end.
 
 isDescendent(Path) ->

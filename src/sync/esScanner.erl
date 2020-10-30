@@ -45,8 +45,8 @@
    , srcFileTimes = undefined :: [{file:filename(), timestamp()}] | undefined
    , onsyncFun = undefined
    , swSyncNode = false
-   , sockMod
-   , sock
+   , sockMod = undefined
+   , sock = undefined
 }).
 
 %% ************************************  API start ***************************
@@ -119,20 +119,27 @@ handleAfter(_, waiting, State) ->
    ListenPort = ?esCfgSync:getv(?listenPort),
    case gen_tcp:listen(ListenPort, ?TCP_DEFAULT_OPTIONS) of
       {ok, LSock} ->
-         os:cmd("./priv/fileSync \"./\"" ++ integer_to_list(ListenPort)),
          case prim_inet:async_accept(LSock, -1) of
             {ok, _Ref} ->
                {ok, SockMod} = inet_db:lookup_socket(LSock),
-               {kpS, State#state{sockMod = SockMod}, {sTimeout, 2000}};
+               io:format("IMY******************11111"),
+               spawn(fun() -> case os:type() of
+                  {win32, _Osname} ->
+                     os:cmd("start ./priv/fileSync ./  " ++ integer_to_list(ListenPort));
+                  _ ->
+                     os:cmd("./priv/fileSync ./ " ++ integer_to_list(ListenPort))
+               end end),
+               io:format("IMY******************22222 "),
+               {kpS, State#state{sockMod = SockMod}, {sTimeout, 2000000, waitConnOver}};
             {error, Reason} ->
                Msg = io_lib:format("init prim_inet:async_accept error ~p~n", [Reason]),
                esUtils:logErrors(Msg),
-               {kpS, State, {sTimeout, 2000}}
+               {kpS, State, {sTimeout, 2000, waitConnOver}}
          end;
       {error, Reason} ->
          Msg = io_lib:format("failed to listen on ~p - ~p (~s) ~n", [ListenPort, Reason, inet:format_error(Reason)]),
          esUtils:logErrors(Msg),
-         {kpS, State, {sTimeout, 2000}}
+         {kpS, State, {sTimeout, 2000, waitConnOver}}
    end.
 
 handleCall(miGetOnsync, _, #state{onsyncFun = OnSync} = State, _From) ->
@@ -225,11 +232,17 @@ handleCast({miSyncNode, IsSync}, _, State) ->
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
-handleInfo({inet_async, _LSock, _Ref, Msg}, waiting, #state{sockMod = SockMod} = State) ->
+handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State) ->
+   io:format("IMY************** get inet_async msg ~p~n", [Msg]),
    case Msg of
       {ok, Sock} ->
          %% make it look like gen_tcp:accept
          inet_db:register_socket(Sock, SockMod),
+         io:format("IMY************** socket optinon111 ~p~n", [inet:getopts(Sock, [active, packet])]),
+         io:format("IMY************** socket optinon222 ~p~n", [inet:getopts(LSock, [active, packet])]),
+         inet:setopts(Sock, [{active, true}]),
+         io:format("IMY************** socket optinon111 ~p~n", [inet:getopts(Sock, [active, packet])]),
+         prim_inet:async_accept(LSock, -1),
          {nextS, running, State#state{sock = Sock}};
       {error, closed} ->
          Msg = io_lib:format("error, closed listen sock error ~p~n",[closed]),
@@ -241,16 +254,22 @@ handleInfo({inet_async, _LSock, _Ref, Msg}, waiting, #state{sockMod = SockMod} =
          {stop, {lsock, Reason}}
    end;
 handleInfo({tcp, Socket, Data}, running, State) ->
+   io:format("IMY************** get tcp msg ~p~n", [Data]),
    kpS_S;
 handleInfo({tcp_closed, Socket}, running, State) ->
+   io:format("IMY************** get tcp msg ~p~n", [close]),
    kpS_S;
 handleInfo({tcp_error, Socket, Reason},running, State) ->
+   io:format("IMY************** get tcp msg ~p~n", [111]),
    kpS_S;
 handleInfo(_Msg, _, _State) ->
+   io:format("IMY************** get tcp msg ~p~n", [_Msg]),
    kpS_S.
 
 handleOnevent({doSync, _}, Msg, Status, State) ->
    handleCast(Msg, Status, State);
+handleOnevent(sTimeout, waitConnOver, Status, State) ->
+   stop;
 handleOnevent(_EventType, _EventContent, _Status, _State) ->
    kpS_S.
 

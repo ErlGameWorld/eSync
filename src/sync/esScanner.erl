@@ -125,7 +125,7 @@ handleAfter(_, waiting, State) ->
                io:format("IMY******************11111"),
                spawn(fun() -> case os:type() of
                   {win32, _Osname} ->
-                     os:cmd("start ./priv/fileSync ./  " ++ integer_to_list(ListenPort));
+                     os:cmd("start ./priv/fileSync.exe ./  " ++ integer_to_list(ListenPort));
                   _ ->
                      os:cmd("./priv/fileSync ./ " ++ integer_to_list(ListenPort))
                end end),

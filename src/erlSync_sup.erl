@@ -23,5 +23,5 @@ start_link() ->
 %%                  modules => modules()}   % optional
 init([]) ->
    SupFlags = #{strategy => one_for_one, intensity => 5, period => 10},
-   ChildSpecs = [?ChildSpec(esScanner, worker)],
+   ChildSpecs = [?ChildSpec(esSyncSrv, worker)],
    {ok, {SupFlags, ChildSpecs}}.

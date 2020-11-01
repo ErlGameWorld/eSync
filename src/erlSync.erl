@@ -23,39 +23,39 @@ stop() ->
 run() ->
    case start() of
       {ok, _Started} ->
-         esScanner:unpause(),
-         esScanner:rescan(),
+         esSyncSrv:unpause(),
+         esSyncSrv:rescan(),
          ok;
       {error, Reason} ->
-         Msg = io_lib:format("start erlSync error ~p~n", [Reason]),
+         Msg = io_lib:format("start erlSync error:~p~n", [Reason]),
          esUtils:logErrors(Msg)
    end.
 
 pause() ->
-   esScanner:pause().
+   esSyncSrv:pause().
 
 swSyncNode(IsSync) ->
    run(),
-   esScanner:swSyncNode(IsSync),
+   esSyncSrv:swSyncNode(IsSync),
    ok.
 
 curInfo() ->
-   esScanner:curInfo().
+   esSyncSrv:curInfo().
 
 setLog(Val) ->
-   esScanner:setLog(Val).
+   esSyncSrv:setLog(Val).
 
 getLog() ->
-   esScanner:getLog().
+   esSyncSrv:getLog().
 
 getOnsync() ->
-   esScanner:getOnsync().
+   esSyncSrv:getOnsync().
 
 setOnsync() ->
-   esScanner:setOnsync(undefined).
+   esSyncSrv:setOnsync(undefined).
 
 setOnsync(Fun) ->
-   esScanner:setOnsync(Fun).
+   esSyncSrv:setOnsync(Fun).
 
 
 

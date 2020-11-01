@@ -1,24 +1,10 @@
 -module(esUtils).
+
 -include("erlSync.hrl").
 
 -compile(inline).
 -compile({inline_size, 128}).
-
--export([
-   getModSrcDir/1,
-   getModOptions/1,
-   getFileType/1,
-   getSrcDir/1,
-   wildcard/2,
-   getEnv/2,
-   setEnv/2,
-   load/2,
-   logSuccess/1,
-   logErrors/1,
-   logWarnings/1,
-   getSystemModules/0,
-   tryGetModOptions/1
-]).
+-compile([export_all, nowarn_export_all]).
 
 getModSrcDir(Module) ->
    case code:is_loaded(Module) of
@@ -102,6 +88,20 @@ tryGetModOptions(Module) ->
       undefiend
    end.
 
+tryGetSrcOptions(SrcDir) ->
+   %% Then we dig back through the parent directories until we find our include directory
+   NewDirName = filename:dirname(SrcDir),
+   case getOptions(NewDirName) of
+      {ok, _Options} = Opts ->
+         Opts;
+      _ ->
+         case NewDirName =/= SrcDir of
+            true ->
+               tryGetSrcOptions(NewDirName);
+            _ ->
+               undefined
+         end
+   end.
 
 transformOutdir(BeamDir, Options) ->
    [{outdir, BeamDir} | proplists:delete(outdir, Options)].
@@ -144,11 +144,16 @@ getFileType(Module) when is_atom(Module) ->
    Source = proplists:get_value(source, Props, ""),
    getFileType(Source);
 
-getFileType(Source) when is_list(Source) ->
+getFileType(Source) ->
    Ext = filename:extension(Source),
    Root = filename:rootname(Source),
    SecondExt = filename:extension(Root),
    case Ext of
+      <<".erl">> when SecondExt =:= <<".dtl">> -> dtl;
+      <<".dtl">> -> dtl;
+      <<".erl">> -> erl;
+      <<".lfe">> -> lfe;
+      <<".ex">> -> elixir;
       ".erl" when SecondExt =:= ".dtl" -> dtl;
       ".dtl" -> dtl;
       ".erl" -> erl;
@@ -193,8 +198,8 @@ determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) ->
 %% Then we dig back through the parent directories until we find our include directory
 findIncludeDirFromAncestors(Cwd, Cwd, _) -> undefined;
 findIncludeDirFromAncestors("/", _, _) -> undefined;
-findIncludeDirFromAncestors( ".", _, _) -> undefined;
-findIncludeDirFromAncestors( "", _, _) -> undefined;
+findIncludeDirFromAncestors(".", _, _) -> undefined;
+findIncludeDirFromAncestors("", _, _) -> undefined;
 findIncludeDirFromAncestors(Dir, Cwd, IncludeBase) ->
    NewDirName = filename:dirname(Dir),
    AttemptDir = filename:join(NewDirName, IncludeBase),
@@ -263,9 +268,120 @@ getSrcDir(Dir, Ctr) ->
       true -> getSrcDir(filename:dirname(Dir), Ctr - 1)
    end.
 
-%% Return all files in a directory matching a regex.
-wildcard(Dir, Regex) ->
-   filelib:fold_files(Dir, Regex, true, fun(Y, Acc) -> [Y | Acc] end, []).
+mergeExtraDirs(IsAddPath) ->
+   case ?esCfgSync:getv(?extraDirs) of
+      undefined ->
+         {[], [], []};
+      ExtraList ->
+         FunMerge =
+            fun(OneExtra, {AddDirs, OnlyDirs, DelDirs} = AllAcc) ->
+               case OneExtra of
+                  {add, DirsAndOpts} ->
+                     Adds =
+                        [
+                           begin
+                              case IsAddPath of
+                                 true ->
+                                    case proplists:get_value(outdir, Opts) of
+                                       undefined ->
+                                          true;
+                                       Path ->
+                                          ok = filelib:ensure_dir(Path),
+                                          true = code:add_pathz(Path)
+                                    end;
+                                 _ ->
+                                    ignore
+                              end,
+                              filename:absname(Dir)
+                           end || {Dir, Opts} <- DirsAndOpts
+                        ],
+                     setelement(1, AllAcc, Adds ++ AddDirs);
+                  {only, DirsAndOpts} ->
+                     Onlys =
+                        [
+                           begin
+                              case IsAddPath of
+                                 true ->
+
+                                    case proplists:get_value(outdir, Opts) of
+                                       undefined ->
+                                          true;
+                                       Path ->
+                                          ok = filelib:ensure_dir(Path),
+                                          true = code:add_pathz(Path)
+                                    end;
+                                 _ ->
+                                    ignore
+                              end,
+                              filename:absname(Dir)
+                           end || {Dir, Opts} <- DirsAndOpts
+                        ],
+                     setelement(2, AllAcc, Onlys ++ OnlyDirs);
+                  {del, DirsAndOpts} ->
+                     Dels =
+                        [
+                           begin
+                              filename:absname(Dir)
+                           end || {Dir, _Opts} <- DirsAndOpts
+                        ],
+                     setelement(3, AllAcc, Dels ++ DelDirs)
+               end
+            end,
+         lists:foldl(FunMerge, {[], [], []}, ExtraList)
+   end.
+
+collSrcFiles(IsAddPath) ->
+   {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
+   CollFiles = filelib:fold_files(filename:absname("./"), ".*\\.(erl|dtl|lfe|ex)$", true,
+      fun(OneFiles, Acc) ->
+         case isOnlyDir(OnlySrcDirs, OneFiles) of
+            true ->
+               case isDelDir(DelSrcDirs, OneFiles) of
+                  false ->
+                     SrcDir = list_to_binary(filename:dirname(OneFiles)),
+                     case getOptions(SrcDir) of
+                        undefined ->
+                           Mod = list_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
+                           {ok, Options} = getModOptions(Mod),
+                           setOptions(SrcDir, Options);
+                        _ ->
+                           ignore
+                     end,
+                     Acc#{list_to_binary(OneFiles) => 1};
+                  _ ->
+                     Acc
+               end;
+            _ ->
+               Acc
+         end
+      end, #{}),
+
+   FunCollAdds =
+      fun(OneDir, FilesAcc) ->
+         filelib:fold_files(OneDir, ".*\\.(erl|dtl|lfe|ex)$", true, fun(OneFiles, Acc) ->
+            Acc#{list_to_binary(OneFiles) => 1} end, FilesAcc)
+      end,
+   lists:foldl(FunCollAdds, CollFiles, AddSrcDirs).
+
+isOnlyDir([], _) ->
+   true;
+isOnlyDir(ReplaceDirs, SrcDir) ->
+   isMatchDir(ReplaceDirs, SrcDir).
+
+isDelDir([], _) ->
+   false;
+isDelDir(ReplaceDirs, SrcDir) ->
+   isMatchDir(ReplaceDirs, SrcDir).
+
+isMatchDir([], _SrcDir) ->
+   false;
+isMatchDir([SrcDir | _ReplaceDirs], SrcDir) ->
+   true;
+isMatchDir([OneDir | ReplaceDirs], SrcDir) ->
+   case re:run(SrcDir, OneDir) of
+      nomatch -> isMatchDir(ReplaceDirs, SrcDir);
+      _ -> true
+   end.
 
 getEnv(Var, Default) ->
    case application:get_env(erlSync, Var) of
@@ -288,7 +404,7 @@ logWarnings(Message) ->
    canLog(warnings) andalso error_logger:warning_msg(lists:flatten(Message)).
 
 canLog(MsgType) ->
-   case esScanner:getLog() of
+   case esSyncSrv:getLog() of
       true -> true;
       all -> true;
       none -> false;
@@ -297,25 +413,6 @@ canLog(MsgType) ->
       L when is_list(L) -> lists:member(MsgType, L);
       _ -> false
    end.
-
-%% Return a list of all modules that belong to Erlang rather than whatever application we may be running.
-getSystemModules() ->
-   Apps = [
-      appmon, asn1, common_test, compiler, crypto, debugger,
-      dialyzer, docbuilder, edoc, erl_interface, erts, et,
-      eunit, gs, hipe, inets, inets, inviso, jinterface, kernel,
-      mnesia, observer, orber, os_mon, parsetools, percept, pman,
-      reltool, runtime_tools, sasl, snmp, ssl, stdlib, syntax_tools,
-      test_server, toolbar, tools, tv, webtool, wx, xmerl, zlib, rebar, rebar3
-   ],
-   FAppMod =
-      fun(App) ->
-         case application:get_key(App, modules) of
-            {ok, Modules} -> Modules;
-            _Other -> []
-         end
-      end,
-   lists:flatten([FAppMod(X) || X <- Apps]).
 
 %% 注意 map类型的数据不能当做key
 -type key() :: atom() | binary() | bitstring() | float() | integer() | list() | tuple().
@@ -354,3 +451,329 @@ lookup_clauses([], Acc) ->
 lookup_clauses([{Key, Value} | T], Acc) ->
    lookup_clauses(T, [lookup_clause(Key, Value) | Acc]).
 
+getOptions(SrcDir) ->
+   case erlang:get(SrcDir) of
+      undefined ->
+         undefined;
+      Options ->
+         {ok, Options}
+   end.
+
+setOptions(SrcDir, Options) ->
+   case erlang:get(SrcDir) of
+      undefined ->
+         erlang:put(SrcDir, Options);
+      OldOptions ->
+         NewOptions =
+            case lists:keytake(compile_info, 1, Options) of
+               {value, {compile_info, ValList1}, Options1} ->
+                  case lists:keytake(compile_info, 1, OldOptions) of
+                     {value, {compile_info, ValList2}, Options2} ->
+                        [{compile_info, lists:usort(ValList1 ++ ValList2)} | lists:usort(Options1 ++ Options2)];
+                     _ ->
+                        lists:usort(Options ++ OldOptions)
+                  end;
+               _ ->
+                  lists:usort(Options ++ OldOptions)
+            end,
+         erlang:put(SrcDir, NewOptions)
+   end.
+
+loadCfg() ->
+   KVs = [{Key, esUtils:getEnv(Key, DefVal)} || {Key, DefVal} <- ?CfgList],
+   esUtils:load(?esCfgSync, KVs).
+
+%% *******************************  加载与编译相关 **********************************************************************
+errorNoFile(Module) ->
+   Msg = io_lib:format("~p Couldn't load module: nofile", [Module]),
+   esUtils:logWarnings([Msg]).
+
+printResults(_Module, SrcFile, [], []) ->
+   Msg = io_lib:format("~s Recompiled", [SrcFile]),
+   esUtils:logSuccess(lists:flatten(Msg));
+printResults(_Module, SrcFile, [], Warnings) ->
+   Msg = [formatErrors(SrcFile, [], Warnings), io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)])],
+   esUtils:logWarnings(Msg);
+printResults(_Module, SrcFile, Errors, Warnings) ->
+   Msg = [formatErrors(SrcFile, Errors, Warnings)],
+   esUtils:logErrors(Msg).
+
+%% @private Print error messages in a pretty and user readable way.
+formatErrors(File, Errors, Warnings) ->
+   AllErrors1 = lists:sort(lists:flatten([X || {_, X} <- Errors])),
+   AllErrors2 = [{Line, "Error", Module, Description} || {Line, Module, Description} <- AllErrors1],
+   AllWarnings1 = lists:sort(lists:flatten([X || {_, X} <- Warnings])),
+   AllWarnings2 = [{Line, "Warning", Module, Description} || {Line, Module, Description} <- AllWarnings1],
+   Everything = lists:sort(AllErrors2 ++ AllWarnings2),
+   FPck =
+      fun({Line, Prefix, Module, ErrorDescription}) ->
+         Msg = formatError(Module, ErrorDescription),
+         io_lib:format("~s:~p: ~s: ~s", [File, Line, Prefix, Msg])
+      end,
+   [FPck(X) || X <- Everything].
+
+formatError(Module, ErrorDescription) ->
+   case erlang:function_exported(Module, format_error, 1) of
+      true -> Module:format_error(ErrorDescription);
+      false -> io_lib:format("~s", [ErrorDescription])
+   end.
+
+fireOnsync(OnsyncFun, Modules) ->
+   case OnsyncFun of
+      undefined -> ok;
+      Funs when is_list(Funs) -> onsyncApplyList(Funs, Modules);
+      Fun -> onsyncApply(Fun, Modules)
+   end.
+
+onsyncApplyList(Funs, Modules) ->
+   [onsyncApply(Fun, Modules) || Fun <- Funs].
+
+onsyncApply({M, F}, Modules) ->
+   erlang:apply(M, F, [Modules]);
+onsyncApply(Fun, Modules) when is_function(Fun) ->
+   Fun(Modules).
+
+reloadChangedMod([], _SwSyncNode, OnsyncFun, Acc) ->
+   fireOnsync(OnsyncFun, Acc);
+reloadChangedMod([Module | LeftMod], SwSyncNode, OnsyncFun, Acc) ->
+   case code:get_object_code(Module) of
+      error ->
+         Msg = io_lib:format("Error loading object code for ~p", [Module]),
+         esUtils:logErrors(Msg),
+         reloadChangedMod(LeftMod, SwSyncNode, OnsyncFun, Acc);
+      {Module, Binary, Filename} ->
+         case code:load_binary(Module, Filename, Binary) of
+            {module, Module} ->
+               Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
+               esUtils:logSuccess(Msg);
+            {error, What} ->
+               Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
+               esUtils:logErrors(Msg)
+         end,
+         case SwSyncNode of
+            true ->
+               {ok, NumNodes, Nodes} = syncLoadModOnAllNodes(Module),
+               MsgNodes = io_lib:format("Reloaded(Beam changed) Mod:~s on ~p nodes:~p", [Module, NumNodes, Nodes]),
+               esUtils:logSuccess(MsgNodes);
+            false ->
+               ignore
+         end,
+         reloadChangedMod(LeftMod, SwSyncNode, OnsyncFun, [Module | Acc])
+   end.
+
+getNodes() ->
+   lists:usort(lists:flatten(nodes() ++ [rpc:call(X, erlang, nodes, []) || X <- nodes()])) -- [node()].
+
+syncLoadModOnAllNodes(Module) ->
+   %% Get a list of nodes known by this node, plus all attached nodes.
+   Nodes = getNodes(),
+   NumNodes = length(Nodes),
+   {Module, Binary, _} = code:get_object_code(Module),
+   FSync =
+      fun(Node) ->
+         MsgNode = io_lib:format("Reloading '~s' on ~p", [Module, Node]),
+         esUtils:logSuccess(MsgNode),
+         rpc:call(Node, code, ensure_loaded, [Module]),
+         case rpc:call(Node, code, which, [Module]) of
+            Filename when is_binary(Filename) orelse is_list(Filename) ->
+               %% File exists, overwrite and load into VM.
+               ok = rpc:call(Node, file, write_file, [Filename, Binary]),
+               rpc:call(Node, code, purge, [Module]),
+
+               case rpc:call(Node, code, load_file, [Module]) of
+                  {module, Module} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Success on node:~p", [Module, Node]),
+                     esUtils:logSuccess(Msg);
+                  {error, What} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Errors on node:~p Reason:~p", [Module, Node, What]),
+                     esUtils:logErrors(Msg)
+               end;
+            _ ->
+               %% File doesn't exist, just load into VM.
+               case rpc:call(Node, code, load_binary, [Module, undefined, Binary]) of
+                  {module, Module} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success on node:~p", [Module, Node]),
+                     esUtils:logSuccess(Msg);
+                  {error, What} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors on node:~p Reason:~p", [Module, Node, What]),
+                     esUtils:logErrors(Msg)
+               end
+         end
+      end,
+   [FSync(X) || X <- Nodes],
+   {ok, NumNodes, Nodes}.
+
+recompileChangeSrcFile([], _SwSyncNode) ->
+   ok;
+recompileChangeSrcFile([File | LeftFile], SwSyncNode) ->
+   recompileSrcFile(File, SwSyncNode),
+   recompileChangeSrcFile(LeftFile, SwSyncNode).
+
+erlydtlCompile(SrcFile, Options) ->
+   F =
+      fun({outdir, OutDir}, Acc) -> [{out_dir, OutDir} | Acc];
+         (OtherOption, Acc) -> [OtherOption | Acc]
+      end,
+   DtlOptions = lists:foldl(F, [], Options),
+   Module = binary_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl")),
+   Compiler = erlydtl,
+   Compiler:compile(SrcFile, Module, DtlOptions).
+
+elixir_compile(SrcFile, Options) ->
+   Outdir = proplists:get_value(outdir, Options),
+   Compiler = ':Elixir.Kernel.ParallelCompiler',
+   Modules = Compiler:files_to_path([list_to_binary(SrcFile)], list_to_binary(Outdir)),
+   Loader =
+      fun(Module) ->
+         Outfile = code:which(Module),
+         Binary = file:read_file(Outfile),
+         {Module, Binary}
+      end,
+   Results = lists:map(Loader, Modules),
+   {ok, multiple, Results, []}.
+
+lfe_compile(SrcFile, Options) ->
+   Compiler = lfe_comp,
+   Compiler:file(SrcFile, Options).
+
+getCompileFunAndModuleName(SrcFile) ->
+   case esUtils:getFileType(SrcFile) of
+      erl ->
+         {fun compile:file/2, binary_to_atom(filename:basename(SrcFile, <<".erl">>))};
+      dtl ->
+         {fun erlydtlCompile/2, list_to_atom(lists:flatten(binary_to_list(filename:basename(SrcFile, <<".dtl">>)) ++ "_dtl"))};
+      lfe ->
+         {fun lfe_compile/2, binary_to_atom(filename:basename(SrcFile, <<".lfe">>))};
+      elixir ->
+         {fun elixir_compile/2, binary_to_atom(filename:basename(SrcFile, <<".ex">>))}
+   end.
+
+getObjectCode(Module) ->
+   case code:get_object_code(Module) of
+      {Module, B, Filename} -> {B, Filename};
+      _ -> {undefined, undefined}
+   end.
+
+
+reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
+   case Binary =/= OldBinary of
+      true ->
+         %% Try to load the module...
+         case code:ensure_loaded(Module) of
+            {module, Module} ->
+               case code:load_binary(Module, Filename, Binary) of
+                  {module, Module} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
+                     esUtils:logSuccess(Msg);
+                  {error, What} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
+                     esUtils:logErrors(Msg)
+               end;
+            {error, nofile} -> errorNoFile(Module);
+            {error, embedded} ->
+               case code:load_file(Module) of                  %% Module is not yet loaded, load it.
+                  {module, Module} -> ok;
+                  {error, nofile} -> errorNoFile(Module)
+               end
+         end;
+      _ ->
+         ignore
+   end.
+
+recompileSrcFile(SrcFile, SwSyncNode) ->
+   %% Get the module, src dir, and options...
+   SrcDir = filename:dirname(SrcFile),
+   {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
+   {OldBinary, Filename}  = getObjectCode(Module),
+   case getOptions(SrcDir) of
+      {ok, Options} ->
+         RightFileDir = binary_to_list(filename:join(SrcDir, filename:basename(SrcFile))),
+         case CompileFun(RightFileDir, [binary, return | Options]) of
+            {ok, Module, Binary, Warnings} ->
+               printResults(Module, RightFileDir, [], Warnings),
+               reloadIfNecessary(Module, OldBinary, Binary, Filename),
+               {ok, [], Warnings};
+            {ok, [{ok, Module, Binary, Warnings}], Warnings2} ->
+               printResults(Module, RightFileDir, [], Warnings ++ Warnings2),
+               reloadIfNecessary(Module, OldBinary, Binary, Filename),
+               {ok, [], Warnings ++ Warnings2};
+            {ok, multiple, Results, Warnings} ->
+               printResults(Module, RightFileDir, [], Warnings),
+               [reloadIfNecessary(CompiledModule, OldBinary, Binary, Filename) || {CompiledModule, Binary} <- Results],
+               {ok, [], Warnings};
+            {ok, OtherModule, _Binary, Warnings} ->
+               Desc = io_lib:format("Module definition (~p) differs from expected (~s)", [OtherModule, filename:rootname(filename:basename(RightFileDir))]),
+               Errors = [{RightFileDir, {0, Module, Desc}}],
+               printResults(Module, RightFileDir, Errors, Warnings),
+               {ok, Errors, Warnings};
+            {error, Errors, Warnings} ->
+               printResults(Module, RightFileDir, Errors, Warnings),
+               {ok, Errors, Warnings}
+         end;
+      undefined ->
+         case esUtils:tryGetModOptions(Module) of
+            {ok, Options} ->
+               setOptions(SrcDir, Options),
+               recompileSrcFile(SrcFile, SwSyncNode);
+            _ ->
+               case esUtils:tryGetSrcOptions(SrcDir) of
+                  {ok, _Options} ->
+                     recompileSrcFile(SrcFile, SwSyncNode);
+                  _ ->
+                     Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
+                     esUtils:logErrors(Msg)
+               end
+         end
+   end.
+
+recompileChangeHrlFile([], _SrcFiles, _SwSyncNode) ->
+   ok;
+recompileChangeHrlFile([Hrl | LeftHrl], SrcFiles, SwSyncNode) ->
+   WhoInclude = whoInclude(Hrl, SrcFiles),
+   [recompileSrcFile(SrcFile, SwSyncNode) || {SrcFile, _} <- maps:to_list(WhoInclude)],
+   recompileChangeHrlFile(LeftHrl, SrcFiles, SwSyncNode).
+
+whoInclude(HrlFile, SrcFiles) ->
+   HrlFileBaseName = filename:basename(HrlFile),
+   Pred =
+      fun(SrcFile, _) ->
+         {ok, Forms} = epp_dodger:parse_file(SrcFile),
+         isInclude(binary_to_list(HrlFileBaseName), Forms)
+      end,
+   maps:filter(Pred, SrcFiles).
+
+isInclude(_HrlFile, []) ->
+   false;
+isInclude(HrlFile, [{tree, attribute, _, {attribute, _, [{_, _, IncludeFile}]}} | Forms]) when is_list(IncludeFile) ->
+   IncludeFileBaseName = filename:basename(IncludeFile),
+   case IncludeFileBaseName of
+      HrlFile -> true;
+      _ -> isInclude(HrlFile, Forms)
+   end;
+isInclude(HrlFile, [_SomeForm | Forms]) ->
+   isInclude(HrlFile, Forms).
+
+dealChangeFile([], Beams, Hrls, Srcs) ->
+   {Beams, Hrls, Srcs};
+dealChangeFile([OneFile | LeftFile], Beams, Hrls, Srcs) ->
+   case filename:extension(OneFile) of
+      <<".beam">> ->
+         Module = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+         dealChangeFile(LeftFile, [Module | Beams], Hrls, Srcs);
+      <<".hrl">> ->
+         dealChangeFile(LeftFile, Beams, [OneFile | Hrls], Srcs);
+      <<>> ->
+         dealChangeFile(LeftFile, Beams, Hrls, Srcs);
+      _ ->
+         dealChangeFile(LeftFile, Beams, Hrls, [OneFile | Srcs])
+   end.
+
+addNewFile([], SrcFiles) ->
+   SrcFiles;
+addNewFile([OneFile | LeftFile], SrcFiles) ->
+   case SrcFiles of
+      #{OneFile := _value} ->
+         addNewFile(LeftFile, SrcFiles);
+      _ ->
+         addNewFile(LeftFile, SrcFiles#{OneFile => 1})
+   end.

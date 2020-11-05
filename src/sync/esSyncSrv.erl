@@ -182,7 +182,7 @@ handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State)
 handleInfo({tcp, _Socket, Data}, running, #state{srcFiles = SrcFiles, onsyncFun = OnsyncFun, swSyncNode = SwSyncNode} = State) ->
    FileList = binary:split(Data, <<"\r\n">>, [global]),
    %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
-   {Beams, Hrls, Srcs} = esUtils:dealChangeFile(FileList, [], [], []),
+   {Beams, Hrls, Srcs} = esUtils:classifyChangeFile(FileList, [], [], []),
    esUtils:reloadChangedMod(Beams, SwSyncNode, OnsyncFun, []),
    case ?esCfgSync:getv(?compileCmd) of
       undefined ->

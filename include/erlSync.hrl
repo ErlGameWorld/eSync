@@ -1,7 +1,5 @@
 -define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
 
--define(gTimeout(Type, Time), {gTimeout, {doSync, Type}, Time, Type}).
-
 -define(TCP_DEFAULT_OPTIONS, [
    binary
    , {packet, 4}

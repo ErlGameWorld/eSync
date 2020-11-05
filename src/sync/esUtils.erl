@@ -36,7 +36,7 @@ getModSrcDir(Module) ->
                   Dir = filename:dirname(LastSource),
                   getSrcDir(Dir)
             end
-         catch _ : _ : _ ->
+         catch _ : _ ->
             undefined
          end;
       _ ->
@@ -60,13 +60,13 @@ getModOptions(Module) ->
             %% add filetype to options (DTL, LFE, erl, etc)
             Options6 = addFileType(Module, Options5),
             {ok, Options6}
-         catch ExType:Error:Stacktrace ->
-            Msg = [io_lib:format("~p:0: ~p looking for options: ~p. Stack: ~p~n", [Module, ExType, Error, Stacktrace])],
+         catch ExType:Error ->
+            Msg = [io_lib:format("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error])],
             logWarnings(Msg),
-            {ok, []}
+            undefined
          end;
       _ ->
-         {ok, []}
+         undefined
    end.
 
 tryGetModOptions(Module) ->
@@ -84,7 +84,7 @@ tryGetModOptions(Module) ->
       %% add filetype to options (DTL, LFE, erl, etc)
       Options6 = addFileType(Module, Options5),
       {ok, Options6}
-   catch _ExType:_Error:_Stacktrace ->
+   catch _ExType:_Error ->
       undefiend
    end.
 
@@ -95,9 +95,31 @@ tryGetSrcOptions(SrcDir) ->
       {ok, _Options} = Opts ->
          Opts;
       _ ->
-         case NewDirName =/= SrcDir of
+         BaseName = filename:basename(SrcDir),
+         IsBaseSrcDir = BaseName == <<"src">> orelse BaseName == <<"Src">>,
+         case NewDirName =/= SrcDir andalso not IsBaseSrcDir of
             true ->
                tryGetSrcOptions(NewDirName);
+            _ when IsBaseSrcDir ->
+               try filelib:fold_files(SrcDir, ".*\\.(erl|dtl|lfe|ex)$", true,
+                  fun(OneFiles, Acc) ->
+                     Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
+                     case getModOptions(Mod) of
+                        {ok, Options} ->
+                           throw({ok, Options});
+                        _ ->
+                           Acc
+                     end
+                  end, undefined)
+               catch
+                  {ok, Options} ->
+                     setOptions(SrcDir, Options),
+                     {ok, Options};
+                  _ExType:_Error ->
+                     Msg = [io_lib:format("looking src options error ~p:~p. ~n", [_ExType, _Error])],
+                     logWarnings(Msg),
+                     undefined
+               end;
             _ ->
                undefined
          end
@@ -113,14 +135,16 @@ ensureInclude(Options) ->
    end.
 
 transformAllIncludes(Module, BeamDir, Options) ->
-   [transformInclude(Module, BeamDir, Opt) || Opt <- Options].
-
-transformInclude(Module, BeamDir, {i, IncludeDir}) ->
-   {ok, SrcDir} = getModSrcDir(Module),
-   {ok, IncludeDir2} = determineIncludeDir(IncludeDir, BeamDir, SrcDir),
-   {i, IncludeDir2};
-transformInclude(_, _, Other) ->
-   Other.
+   [begin
+       case Opt of
+          {i, IncludeDir} ->
+             {ok, SrcDir} = getModSrcDir(Module),
+             {ok, IncludeDir2} = determineIncludeDir(IncludeDir, BeamDir, SrcDir),
+             {i, IncludeDir2};
+          _ ->
+             Opt
+       end
+    end || Opt <- Options].
 
 maybeAddCompileInfo(Options) ->
    case lists:member(compile_info, Options) of
@@ -332,22 +356,26 @@ mergeExtraDirs(IsAddPath) ->
 
 collSrcFiles(IsAddPath) ->
    {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
-   CollFiles = filelib:fold_files(filename:absname("./"), ".*\\.(erl|dtl|lfe|ex)$", true,
+   CollFiles = filelib:fold_files(filename:absname(<<"./">>), ".*\\.(erl|dtl|lfe|ex)$", true,
       fun(OneFiles, Acc) ->
          case isOnlyDir(OnlySrcDirs, OneFiles) of
             true ->
                case isDelDir(DelSrcDirs, OneFiles) of
                   false ->
-                     SrcDir = list_to_binary(filename:dirname(OneFiles)),
+                     SrcDir = filename:dirname(OneFiles),
                      case getOptions(SrcDir) of
                         undefined ->
-                           Mod = list_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
-                           {ok, Options} = getModOptions(Mod),
-                           setOptions(SrcDir, Options);
+                           Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
+                           case getModOptions(Mod) of
+                              {ok, Options} ->
+                                 setOptions(SrcDir, Options);
+                              _ ->
+                                 ignore
+                           end;
                         _ ->
                            ignore
                      end,
-                     Acc#{list_to_binary(OneFiles) => 1};
+                     Acc#{OneFiles => 1};
                   _ ->
                      Acc
                end;
@@ -358,8 +386,9 @@ collSrcFiles(IsAddPath) ->
 
    FunCollAdds =
       fun(OneDir, FilesAcc) ->
-         filelib:fold_files(OneDir, ".*\\.(erl|dtl|lfe|ex)$", true, fun(OneFiles, Acc) ->
-            Acc#{list_to_binary(OneFiles) => 1} end, FilesAcc)
+         filelib:fold_files(case is_list(OneDir) of true -> list_to_binary(OneDir); _ ->
+            OneDir end, ".*\\.(erl|dtl|lfe|ex)$", true, fun(OneFiles, Acc) ->
+            Acc#{OneFiles => 1} end, FilesAcc)
       end,
    lists:foldl(FunCollAdds, CollFiles, AddSrcDirs).
 
@@ -622,7 +651,7 @@ erlydtlCompile(SrcFile, Options) ->
 elixir_compile(SrcFile, Options) ->
    Outdir = proplists:get_value(outdir, Options),
    Compiler = ':Elixir.Kernel.ParallelCompiler',
-   Modules = Compiler:files_to_path([list_to_binary(SrcFile)], list_to_binary(Outdir)),
+   Modules = Compiler:files_to_path([SrcFile], Outdir),
    Loader =
       fun(Module) ->
          Outfile = code:which(Module),
@@ -684,7 +713,7 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
    %% Get the module, src dir, and options...
    SrcDir = filename:dirname(SrcFile),
    {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
-   {OldBinary, Filename}  = getObjectCode(Module),
+   {OldBinary, Filename} = getObjectCode(Module),
    case getOptions(SrcDir) of
       {ok, Options} ->
          RightFileDir = binary_to_list(filename:join(SrcDir, filename:basename(SrcFile))),
@@ -717,7 +746,8 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
                recompileSrcFile(SrcFile, SwSyncNode);
             _ ->
                case esUtils:tryGetSrcOptions(SrcDir) of
-                  {ok, _Options} ->
+                  {ok, Options} ->
+                     setOptions(SrcDir, Options),
                      recompileSrcFile(SrcFile, SwSyncNode);
                   _ ->
                      Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
@@ -753,19 +783,19 @@ isInclude(HrlFile, [{tree, attribute, _, {attribute, _, [{_, _, IncludeFile}]}} 
 isInclude(HrlFile, [_SomeForm | Forms]) ->
    isInclude(HrlFile, Forms).
 
-dealChangeFile([], Beams, Hrls, Srcs) ->
+classifyChangeFile([], Beams, Hrls, Srcs) ->
    {Beams, Hrls, Srcs};
-dealChangeFile([OneFile | LeftFile], Beams, Hrls, Srcs) ->
+classifyChangeFile([OneFile | LeftFile], Beams, Hrls, Srcs) ->
    case filename:extension(OneFile) of
       <<".beam">> ->
          Module = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
-         dealChangeFile(LeftFile, [Module | Beams], Hrls, Srcs);
+         classifyChangeFile(LeftFile, [Module | Beams], Hrls, Srcs);
       <<".hrl">> ->
-         dealChangeFile(LeftFile, Beams, [OneFile | Hrls], Srcs);
+         classifyChangeFile(LeftFile, Beams, [OneFile | Hrls], Srcs);
       <<>> ->
-         dealChangeFile(LeftFile, Beams, Hrls, Srcs);
+         classifyChangeFile(LeftFile, Beams, Hrls, Srcs);
       _ ->
-         dealChangeFile(LeftFile, Beams, Hrls, [OneFile | Srcs])
+         classifyChangeFile(LeftFile, Beams, Hrls, [OneFile | Srcs])
    end.
 
 addNewFile([], SrcFiles) ->

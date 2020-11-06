@@ -105,16 +105,16 @@ tryGetSrcOptions(SrcDir) ->
                   fun(OneFiles, Acc) ->
                      Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
                      case getModOptions(Mod) of
-                        {ok, Options} ->
-                           throw({ok, Options});
+                        {ok, _Options} = Opts ->
+                           throw(Opts);
                         _ ->
                            Acc
                      end
                   end, undefined)
                catch
-                  {ok, Options} ->
+                  {ok, Options} = Opts ->
                      setOptions(SrcDir, Options),
-                     {ok, Options};
+                     Opts;
                   _ExType:_Error ->
                      Msg = [io_lib:format("looking src options error ~p:~p. ~n", [_ExType, _Error])],
                      logWarnings(Msg),
@@ -193,14 +193,14 @@ getFileType(Source) ->
 determineIncludeDir(IncludeDir, BeamDir, SrcDir) ->
    IncludeBase = filename:basename(IncludeDir),
    case determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) of
-      {ok, D} -> {ok, D};
+      {ok, _Dir} = RetD  -> RetD;
       undefined ->
          {ok, Cwd} = file:get_cwd(),
          % Cwd2 = normalizeCaseWindowsDir(Cwd),
          % SrcDir2 = normalizeCaseWindowsDir(SrcDir),
          % IncludeBase2 = normalizeCaseWindowsDir(IncludeBase),
          case findIncludeDirFromAncestors(SrcDir, Cwd, IncludeBase) of
-            {ok, D} -> {ok, D};
+            {ok, _Dir} = RetD -> RetD;
             undefined -> {ok, IncludeDir} %% Failed, just stick with original
          end
    end.

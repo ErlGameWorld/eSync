@@ -24,7 +24,6 @@ run() ->
    case start() of
       {ok, _Started} ->
          esSyncSrv:unpause(),
-         esSyncSrv:rescan(),
          ok;
       {error, Reason} ->
          Msg = io_lib:format("start erlSync error:~p~n", [Reason]),

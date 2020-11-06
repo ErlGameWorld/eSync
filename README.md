@@ -1,8 +1,9 @@
 # erlSync
     otp21.2+
-#基于 [fsnotify](https://github.com/fsnotify/fsnotify) 跨平台文件系统通知。
-#改造自 [sync](https://github.com/rustyio/sync)
-#封装的监听文件项目[fileSync](https://github.com/SisMaker/fileSync) .如果要自己构建执行文件, 拉取监听文件项目, 然后 go build 复制执行文件到该工程的 priv 目录即可
+    Erlang即时重新编译和重新加载！
+## 基于 [fsnotify](https://github.com/fsnotify/fsnotify) 跨平台文件系统通知。
+## 改造自 [sync](https://github.com/rustyio/sync)
+## 封装的监听文件项目[fileSync](https://github.com/SisMaker/fileSync) 如果要自己构建执行文件, 拉取监听文件项目, 然后 go build 复制执行文件到该工程的 priv 目录即可
 
 # 特点
     本项目实现了自带编译与加载功能，另外支持额外的编译命令，但是执行额外的编译命令是通过os:cmd(),会阻塞VM不是很建议使用.

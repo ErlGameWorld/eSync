@@ -96,7 +96,7 @@ tryGetSrcOptions(SrcDir) ->
          Opts;
       _ ->
          BaseName = filename:basename(SrcDir),
-         IsBaseSrcDir = BaseName == <<"src">> orelse BaseName == <<"Src">>,
+         IsBaseSrcDir = BaseName == ?rootSrcDir,
          case NewDirName =/= SrcDir andalso not IsBaseSrcDir of
             true ->
                tryGetSrcOptions(NewDirName);
@@ -104,7 +104,7 @@ tryGetSrcOptions(SrcDir) ->
                try filelib:fold_files(SrcDir, ".*\\.(erl|dtl|lfe|ex)$", true,
                   fun(OneFiles, Acc) ->
                      Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
-                     case getModOptions(Mod) of
+                     case tryGetModOptions(Mod) of
                         {ok, _Options} = Opts ->
                            throw(Opts);
                         _ ->
@@ -112,8 +112,7 @@ tryGetSrcOptions(SrcDir) ->
                      end
                   end, undefined)
                catch
-                  {ok, Options} = Opts ->
-                     setOptions(SrcDir, Options),
+                  {ok, _Options} = Opts ->
                      Opts;
                   _ExType:_Error ->
                      Msg = [io_lib:format("looking src options error ~p:~p. ~n", [_ExType, _Error])],
@@ -362,13 +361,13 @@ collSrcFiles(IsAddPath) ->
             true ->
                case isDelDir(DelSrcDirs, OneFiles) of
                   false ->
-                     SrcDir = filename:dirname(OneFiles),
-                     case getOptions(SrcDir) of
+                     [RootSrcDir | _Other] = binary:split(OneFiles, ?rootSrcDir),
+                     case getOptions(RootSrcDir) of
                         undefined ->
                            Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
                            case getModOptions(Mod) of
                               {ok, Options} ->
-                                 setOptions(SrcDir, Options);
+                                 setOptions(RootSrcDir, Options);
                               _ ->
                                  ignore
                            end;
@@ -574,16 +573,16 @@ reloadChangedMod([Module | LeftMod], SwSyncNode, OnsyncFun, Acc) ->
       {Module, Binary, Filename} ->
          case code:load_binary(Module, Filename, Binary) of
             {module, Module} ->
-               Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
+               Msg = io_lib:format("Reloaded(Beam changed) Mod: ~s Success", [Module]),
                esUtils:logSuccess(Msg);
             {error, What} ->
-               Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
+               Msg = io_lib:format("Reloaded(Beam changed) Mod: ~s Errors Reason:~p", [Module, What]),
                esUtils:logErrors(Msg)
          end,
          case SwSyncNode of
             true ->
                {ok, NumNodes, Nodes} = syncLoadModOnAllNodes(Module),
-               MsgNodes = io_lib:format("Reloaded(Beam changed) Mod:~s on ~p nodes:~p", [Module, NumNodes, Nodes]),
+               MsgNodes = io_lib:format("Reloaded(Beam changed) Mod: ~s on ~p nodes:~p", [Module, NumNodes, Nodes]),
                esUtils:logSuccess(MsgNodes);
             false ->
                ignore
@@ -712,12 +711,13 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
 
 recompileSrcFile(SrcFile, SwSyncNode) ->
    %% Get the module, src dir, and options...
-   SrcDir = filename:dirname(SrcFile),
+   [RootSrcDir | _Other] = binary:split(SrcFile, ?rootSrcDir),
+   CurSrcDir = filename:dirname(SrcFile),
    {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
    {OldBinary, Filename} = getObjectCode(Module),
-   case getOptions(SrcDir) of
+   case getOptions(RootSrcDir) of
       {ok, Options} ->
-         RightFileDir = binary_to_list(filename:join(SrcDir, filename:basename(SrcFile))),
+         RightFileDir = binary_to_list(filename:join(CurSrcDir, filename:basename(SrcFile))),
          case CompileFun(RightFileDir, [binary, return | Options]) of
             {ok, Module, Binary, Warnings} ->
                printResults(Module, RightFileDir, [], Warnings),
@@ -738,17 +738,20 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
                {ok, Errors, Warnings};
             {error, Errors, Warnings} ->
                printResults(Module, RightFileDir, Errors, Warnings),
-               {ok, Errors, Warnings}
+               {ok, Errors, Warnings};
+            _Err ->
+               Msg = io_lib:format("compile Mod:~s Errors Reason:~p", [Module, _Err]),
+               esUtils:logErrors(Msg)
          end;
       undefined ->
          case esUtils:tryGetModOptions(Module) of
             {ok, Options} ->
-               setOptions(SrcDir, Options),
+               setOptions(RootSrcDir, Options),
                recompileSrcFile(SrcFile, SwSyncNode);
             _ ->
-               case esUtils:tryGetSrcOptions(SrcDir) of
+               case esUtils:tryGetSrcOptions(CurSrcDir) of
                   {ok, Options} ->
-                     setOptions(SrcDir, Options),
+                     setOptions(RootSrcDir, Options),
                      recompileSrcFile(SrcFile, SwSyncNode);
                   _ ->
                      Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
@@ -764,25 +767,57 @@ recompileChangeHrlFile([Hrl | LeftHrl], SrcFiles, SwSyncNode) ->
    [recompileSrcFile(SrcFile, SwSyncNode) || {SrcFile, _} <- maps:to_list(WhoInclude)],
    recompileChangeHrlFile(LeftHrl, SrcFiles, SwSyncNode).
 
+%% 注释
+%% whoInclude(HrlFile, SrcFiles) ->
+%%    HrlFileBaseName = filename:basename(HrlFile),
+%%    Pred =
+%%       fun(SrcFile, _) ->
+%%          {ok, Forms} = epp_dodger:parse_file(SrcFile),
+%%          isInclude(binary_to_list(HrlFileBaseName), Forms)
+%%       end,
+%%    maps:filter(Pred, SrcFiles).
+%% isInclude(_HrlFile, []) ->
+%%    false;
+%% isInclude(HrlFile, [{tree, attribute, _, {attribute, _, [{_, _, IncludeFile}]}} | Forms]) when is_list(IncludeFile) ->
+%%    IncludeFileBaseName = filename:basename(IncludeFile),
+%%    case IncludeFileBaseName of
+%%       HrlFile -> true;
+%%       _ -> isInclude(HrlFile, Forms)
+%%    end;
+%% isInclude(HrlFile, [_SomeForm | Forms]) ->
+%%    isInclude(HrlFile, Forms).
+
 whoInclude(HrlFile, SrcFiles) ->
    HrlFileBaseName = filename:basename(HrlFile),
    Pred =
       fun(SrcFile, _) ->
-         {ok, Forms} = epp_dodger:parse_file(SrcFile),
-         isInclude(binary_to_list(HrlFileBaseName), Forms)
+         case file:open(SrcFile, [read, binary]) of
+            {ok, IoDevice} ->
+               IsInclude = doMathEveryLine(IoDevice, HrlFileBaseName),
+               file:close(IoDevice),
+               IsInclude;
+            _ ->
+               false
+         end
       end,
    maps:filter(Pred, SrcFiles).
-
-isInclude(_HrlFile, []) ->
-   false;
-isInclude(HrlFile, [{tree, attribute, _, {attribute, _, [{_, _, IncludeFile}]}} | Forms]) when is_list(IncludeFile) ->
-   IncludeFileBaseName = filename:basename(IncludeFile),
-   case IncludeFileBaseName of
-      HrlFile -> true;
-      _ -> isInclude(HrlFile, Forms)
-   end;
-isInclude(HrlFile, [_SomeForm | Forms]) ->
-   isInclude(HrlFile, Forms).
+doMathEveryLine(IoDevice, HrlFileBaseName) ->
+   case file:read_line(IoDevice) of
+      {ok, Data} ->
+         case re:run(Data, HrlFileBaseName) of
+            nomatch ->
+               case re:run(Data, <<"->">>) of
+                  nomatch ->
+                     doMathEveryLine(IoDevice, HrlFileBaseName);
+                  _ ->
+                     false
+               end;
+            _ ->
+               true
+         end;
+      _ ->
+         false
+   end.
 
 classifyChangeFile([], Beams, Hrls, Srcs) ->
    {Beams, Hrls, Srcs};

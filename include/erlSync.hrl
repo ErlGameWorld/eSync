@@ -19,5 +19,5 @@
 -define(CfgList, [{?Log, all}, {?listenPort, 12369}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}]).
 
 -define(esCfgSync, esCfgSync).
-
+-define(rootSrcDir, <<"src">>).
 -define(esRecompileCnt, '$esRecompileCnt').

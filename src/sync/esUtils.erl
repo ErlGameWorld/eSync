@@ -218,6 +218,22 @@ determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) ->
          end
    end.
 
+%% get the src dir
+getRootSrcDirFromSrcDir(SrcDir) ->
+   NewDirName = filename:dirname(SrcDir),
+   BaseName = filename:basename(SrcDir),
+   case BaseName  of
+      ?rootSrcDir ->
+         NewDirName;
+      _ ->
+         case NewDirName =/= SrcDir of
+            true ->
+               getRootSrcDirFromSrcDir(NewDirName);
+            _ ->
+               undefined
+         end
+   end.
+
 %% Then we dig back through the parent directories until we find our include directory
 findIncludeDirFromAncestors(Cwd, Cwd, _) -> undefined;
 findIncludeDirFromAncestors("/", _, _) -> undefined;
@@ -361,7 +377,13 @@ collSrcFiles(IsAddPath) ->
             true ->
                case isDelDir(DelSrcDirs, OneFiles) of
                   false ->
-                     [RootSrcDir | _Other] = binary:split(OneFiles, ?rootSrcDir),
+                     RootSrcDir =
+                        case getRootSrcDirFromSrcDir(OneFiles) of
+                           undefined ->
+                              filename:dirname(OneFiles);
+                           RetSrcDir ->
+                              RetSrcDir
+                        end,
                      case getOptions(RootSrcDir) of
                         undefined ->
                            Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
@@ -711,7 +733,13 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
 
 recompileSrcFile(SrcFile, SwSyncNode) ->
    %% Get the module, src dir, and options...
-   [RootSrcDir | _Other] = binary:split(SrcFile, ?rootSrcDir),
+   RootSrcDir =
+      case getRootSrcDirFromSrcDir(SrcFile) of
+         undefined ->
+            filename:dirname(SrcFile);
+         RetSrcDir ->
+            RetSrcDir
+      end,
    CurSrcDir = filename:dirname(SrcFile),
    {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
    {OldBinary, Filename} = getObjectCode(Module),

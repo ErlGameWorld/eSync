@@ -147,38 +147,6 @@ handleCast(miRescan, _, State) ->
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
-handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State) ->
-   case Msg of
-      {ok, Sock} ->
-         %% make it look like gen_tcp:accept
-         inet_db:register_socket(Sock, SockMod),
-         inet:setopts(Sock, [{active, true}]),
-         prim_inet:async_accept(LSock, -1),
-
-         %% 建立了连接 先发送监听目录配置
-         {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
-         AddStr = string:join([filename:nativename(OneDir) || OneDir <- AddSrcDirs], "|"),
-         OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
-         DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
-         AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
-         gen_tcp:send(Sock, AllStr),
-         case ?esCfgSync:getv(?compileCmd) of
-            undefined ->
-               %% 然后收集一下监听目录下的src文件
-               SrcFiles = esUtils:collSrcFiles(true),
-               {nextS, running, State#state{sock = Sock, srcFiles = SrcFiles}};
-            _ ->
-               {nextS, running, State}
-         end;
-      {error, closed} ->
-         Msg = io_lib:format("error, closed listen sock error ~p~n", [closed]),
-         esUtils:logErrors(Msg),
-         {stop, normal};
-      {error, Reason} ->
-         Msg = io_lib:format("listen sock error ~p~n", [Reason]),
-         esUtils:logErrors(Msg),
-         {stop, {lsock, Reason}}
-   end;
 handleInfo({tcp, _Socket, Data}, running, #state{srcFiles = SrcFiles, onsyncFun = OnsyncFun, swSyncNode = SwSyncNode} = State) ->
    FileList = binary:split(Data, <<"\r\n">>, [global]),
    %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
@@ -210,6 +178,38 @@ handleInfo({tcp, _Socket, Data}, running, #state{srcFiles = SrcFiles, onsyncFun 
                ignore
          end,
          kpS_S
+   end;
+handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State) ->
+   case Msg of
+      {ok, Sock} ->
+         %% make it look like gen_tcp:accept
+         inet_db:register_socket(Sock, SockMod),
+         inet:setopts(Sock, [{active, true}]),
+         prim_inet:async_accept(LSock, -1),
+
+         %% 建立了连接 先发送监听目录配置
+         {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
+         AddStr = string:join([filename:nativename(OneDir) || OneDir <- AddSrcDirs], "|"),
+         OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
+         DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
+         AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
+         gen_tcp:send(Sock, AllStr),
+         case ?esCfgSync:getv(?compileCmd) of
+            undefined ->
+               %% 然后收集一下监听目录下的src文件
+               SrcFiles = esUtils:collSrcFiles(true),
+               {nextS, running, State#state{sock = Sock, srcFiles = SrcFiles}};
+            _ ->
+               {nextS, running, State}
+         end;
+      {error, closed} ->
+         Msg = io_lib:format("error, closed listen sock error ~p~n", [closed]),
+         esUtils:logErrors(Msg),
+         {stop, normal};
+      {error, Reason} ->
+         Msg = io_lib:format("listen sock error ~p~n", [Reason]),
+         esUtils:logErrors(Msg),
+         {stop, {lsock, Reason}}
    end;
 handleInfo({tcp_closed, _Socket}, running, _State) ->
    Msg = io_lib:format("esSyncSrv receive tcp_closed ~n", []),

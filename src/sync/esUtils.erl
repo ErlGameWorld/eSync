@@ -521,14 +521,13 @@ printResults(_Module, SrcFile, [], []) ->
    Msg = io_lib:format("~s Recompiled", [SrcFile]),
    esUtils:logSuccess(lists:flatten(Msg));
 printResults(_Module, SrcFile, [], Warnings) ->
-   Msg = [formatErrors(SrcFile, [], Warnings), io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)])],
-   esUtils:logWarnings(Msg);
+   formatErrors(fun esUtils:logWarnings/1, SrcFile, [], Warnings), io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)]);
 printResults(_Module, SrcFile, Errors, Warnings) ->
-   Msg = [formatErrors(SrcFile, Errors, Warnings)],
-   esUtils:logErrors(Msg).
+   formatErrors(fun esUtils:logErrors/1, SrcFile, Errors, Warnings).
+
 
 %% @private Print error messages in a pretty and user readable way.
-formatErrors(File, Errors, Warnings) ->
+formatErrors(LogFun, File, Errors, Warnings) ->
    AllErrors1 = lists:sort(lists:flatten([X || {_, X} <- Errors])),
    AllErrors2 = [{Line, "Error", Module, Description} || {Line, Module, Description} <- AllErrors1],
    AllWarnings1 = lists:sort(lists:flatten([X || {_, X} <- Warnings])),
@@ -537,9 +536,11 @@ formatErrors(File, Errors, Warnings) ->
    FPck =
       fun({Line, Prefix, Module, ErrorDescription}) ->
          Msg = formatError(Module, ErrorDescription),
-         io_lib:format("~s:~p: ~s: ~s", [File, Line, Prefix, Msg])
+         LogMsg = io_lib:format("~s: ~p: ~s: ~s", [File, Line, Prefix, Msg]),
+         LogFun(LogMsg)
       end,
-   [FPck(X) || X <- Everything].
+   [FPck(X) || X <- Everything],
+   ok.
 
 formatError(Module, ErrorDescription) ->
    case erlang:function_exported(Module, format_error, 1) of

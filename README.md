@@ -31,7 +31,7 @@
     	    [
     	        {listenPort, 12369},
                 {compileCmd, undefined},
-                {srcDirs, undefined}
+                {extraDirs, undefined}
                 {log, all},     
                 {descendant, fix}
             ]      

@@ -130,9 +130,9 @@ handleCall(miCurInfo, _, State, _Form) ->
 handleCall(_Request, _, _State, _From) ->
    kpS_S.
 
-handleCast(miPause, _, State) ->
+handleCast(miPause, running, State) ->
    {nextS, pause, State};
-handleCast(miUnpause, _, State) ->
+handleCast(miUnpause, pause, State) ->
    {nextS, running, State};
 handleCast({miSyncNode, IsSync}, _, State) ->
    case IsSync of

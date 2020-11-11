@@ -194,6 +194,7 @@ handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State)
          DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
          AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
          gen_tcp:send(Sock, AllStr),
+         esUtils:logSuccess("erlSync connect fileSync success..."),
          case ?esCfgSync:getv(?compileCmd) of
             undefined ->
                %% 然后收集一下监听目录下的src文件

@@ -106,10 +106,14 @@ handleAfter(?None, waiting, State) ->
                   case os:type() of
                      {win32, _Osname} ->
                         CmtStr = "start " ++ esUtils:fileSyncPath("fileSync.exe") ++ " ./ " ++ integer_to_list(ListenPort),
-                        os:cmd(CmtStr);
+                        CmdRet = os:cmd(CmtStr),
+                        RetMsg = io_lib:format("the os:cmd start fileSync CmtStr:~p ret:~p ~n ", [CmtStr, CmdRet]),
+                        esUtils:logErrors(RetMsg);
                      _ ->
                         CmtStr = esUtils:fileSyncPath("fileSync") ++  " ./ " ++ integer_to_list(ListenPort),
-                        os:cmd(CmtStr)
+                        CmdRet = os:cmd(CmtStr),
+                        RetMsg = io_lib:format("the os:cmd start fileSync CmtStr:~p ret:~p ~n ", [CmtStr, CmdRet]),
+                        esUtils:logErrors(RetMsg)
                   end end),
                {kpS, State#state{sockMod = SockMod}, {sTimeout, 4000, waitConnOver}};
             {error, Reason} ->

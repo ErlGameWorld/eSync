@@ -105,9 +105,11 @@ handleAfter(?None, waiting, State) ->
                spawn(fun() ->
                   case os:type() of
                      {win32, _Osname} ->
-                        os:cmd("start ./priv/fileSync.exe ./  " ++ integer_to_list(ListenPort));
+                        CmtStr = "start " ++ esUtils:fileSyncPath("fileSync.exe") ++ " ./ " ++ integer_to_list(ListenPort),
+                        os:cmd(CmtStr);
                      _ ->
-                        os:cmd("./priv/fileSync ./ " ++ integer_to_list(ListenPort))
+                        CmtStr = esUtils:fileSyncPath("fileSync") ++  " ./ " ++ integer_to_list(ListenPort),
+                        os:cmd(CmtStr)
                   end end),
                {kpS, State#state{sockMod = SockMod}, {sTimeout, 4000, waitConnOver}};
             {error, Reason} ->

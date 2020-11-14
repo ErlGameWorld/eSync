@@ -871,3 +871,16 @@ addNewFile([OneFile | LeftFile], SrcFiles) ->
       _ ->
          addNewFile(LeftFile, SrcFiles#{OneFile => 1})
    end.
+
+fileSyncPath(ExecName) ->
+   case code:priv_dir(?MODULE) of
+      {error, _} ->
+         case code:which(?MODULE) of
+            Filename when is_list(Filename) ->
+               filename:join([filename:dirname(filename:dirname(Filename)), "priv", ExecName]);
+            _ ->
+               filename:join("../priv", ExecName)
+         end;
+      Dir ->
+         filename:join(Dir, ExecName)
+   end.

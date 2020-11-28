@@ -720,11 +720,27 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
                      Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
                      esUtils:logErrors(Msg)
                end;
-            {error, nofile} -> errorNoFile(Module);
+            {error, nofile} ->
+               case code:load_binary(Module, Filename, Binary) of
+                  {module, Module} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
+                     esUtils:logSuccess(Msg);
+                  {error, What} ->
+                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
+                     esUtils:logErrors(Msg)
+               end;
             {error, embedded} ->
                case code:load_file(Module) of                  %% Module is not yet loaded, load it.
                   {module, Module} -> ok;
-                  {error, nofile} -> errorNoFile(Module)
+                  {error, nofile} ->
+                     case code:load_binary(Module, Filename, Binary) of
+                        {module, Module} ->
+                           Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
+                           esUtils:logSuccess(Msg);
+                        {error, What} ->
+                           Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
+                           esUtils:logErrors(Msg)
+                     end
                end
          end;
       _ ->

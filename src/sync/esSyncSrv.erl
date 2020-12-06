@@ -1,7 +1,7 @@
 -module(esSyncSrv).
--behaviour(gen_ipc).
+-behaviour(es_gen_ipc).
 
--include("erlSync.hrl").
+-include("eSync.hrl").
 
 -compile(inline).
 -compile({inline_size, 128}).
@@ -20,7 +20,7 @@
    swSyncNode/1
 ]).
 
-%% gen_ipc callbacks
+%% es_gen_ipc callbacks
 -export([
    init/1,
    handleCall/4,
@@ -44,21 +44,21 @@
 
 %% ************************************  API start ***************************
 rescan() ->
-   gen_ipc:cast(?SERVER, miRescan),
+   es_gen_ipc:cast(?SERVER, miRescan),
    esUtils:logSuccess("start rescaning source files..."),
    ok.
 
 unpause() ->
-   gen_ipc:cast(?SERVER, miUnpause),
+   es_gen_ipc:cast(?SERVER, miUnpause),
    ok.
 
 pause() ->
-   gen_ipc:cast(?SERVER, miPause),
-   esUtils:logSuccess("Pausing erlSync. Call erlSync:run() to restart"),
+   es_gen_ipc:cast(?SERVER, miPause),
+   esUtils:logSuccess("Pausing eSync. Call eSync:run() to restart"),
    ok.
 
 curInfo() ->
-   gen_ipc:call(?SERVER, miCurInfo).
+   es_gen_ipc:call(?SERVER, miCurInfo).
 
 setLog(T) when ?LOG_ON(T) ->
    esUtils:setEnv(log, T),
@@ -75,18 +75,18 @@ getLog() ->
    ?esCfgSync:getv(log).
 
 swSyncNode(IsSync) ->
-   gen_ipc:cast(?SERVER, {miSyncNode, IsSync}),
+   es_gen_ipc:cast(?SERVER, {miSyncNode, IsSync}),
    ok.
 
 getOnsync() ->
-   gen_ipc:call(?SERVER, miGetOnsync).
+   es_gen_ipc:call(?SERVER, miGetOnsync).
 
 setOnsync(Fun) ->
-   gen_ipc:call(?SERVER, {miSetOnsync, Fun}).
+   es_gen_ipc:call(?SERVER, {miSetOnsync, Fun}).
 
 %% ************************************  API end   ***************************
 start_link() ->
-   gen_ipc:start_link({local, ?SERVER}, ?MODULE, ?None, []).
+   es_gen_ipc:start_link({local, ?SERVER}, ?MODULE, ?None, []).
 
 %% status :: waiting | running | pause
 init(_Args) ->
@@ -200,7 +200,7 @@ handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State)
          DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
          AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
          gen_tcp:send(Sock, AllStr),
-         esUtils:logSuccess("erlSync connect fileSync success..."),
+         esUtils:logSuccess("eSync connect fileSync success..."),
          case ?esCfgSync:getv(?compileCmd) of
             undefined ->
                %% 然后收集一下监听目录下的src文件

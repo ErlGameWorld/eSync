@@ -1,4 +1,4 @@
--module(erlSync_sup).
+-module(eSync_sup).
 -behaviour(supervisor).
 
 -export([

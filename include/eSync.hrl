@@ -20,4 +20,3 @@
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).
--define(esRecompileCnt, '$esRecompileCnt').

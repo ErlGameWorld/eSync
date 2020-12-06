@@ -1,6 +1,6 @@
 -module(esUtils).
 
--include("erlSync.hrl").
+-include("eSync.hrl").
 
 -compile(inline).
 -compile({inline_size, 128}).
@@ -434,7 +434,7 @@ isMatchDir([OneDir | ReplaceDirs], SrcDir) ->
    end.
 
 getEnv(Var, Default) ->
-   case application:get_env(erlSync, Var) of
+   case application:get_env(eSync, Var) of
       {ok, Value} ->
          Value;
       _ ->
@@ -442,7 +442,7 @@ getEnv(Var, Default) ->
    end.
 
 setEnv(Var, Val) ->
-   ok = application:set_env(erlSync, Var, Val).
+   ok = application:set_env(eSync, Var, Val).
 
 logSuccess(Message) ->
    canLog(success) andalso error_logger:info_msg(lists:flatten(Message)).

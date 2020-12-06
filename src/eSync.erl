@@ -1,4 +1,4 @@
--module(erlSync).
+-module(eSync).
 
 -export([
    start/0,
@@ -15,10 +15,10 @@
 ]).
 
 start() ->
-   application:ensure_all_started(erlSync).
+   application:ensure_all_started(eSync).
 
 stop() ->
-   application:stop(erlSync).
+   application:stop(eSync).
 
 run() ->
    case start() of
@@ -26,7 +26,7 @@ run() ->
          esSyncSrv:unpause(),
          ok;
       {error, Reason} ->
-         Msg = io_lib:format("start erlSync error:~p~n", [Reason]),
+         Msg = io_lib:format("start eSync error:~p~n", [Reason]),
          esUtils:logErrors(Msg)
    end.
 

@@ -12,11 +12,10 @@
    , {exit_on_close, true}]).
 
 -define(Log, log).
--define(listenPort, listenPort).
 -define(compileCmd, compileCmd).
 -define(extraDirs, extraDirs).
 -define(descendant, descendant).
--define(CfgList, [{?Log, all}, {?listenPort, 12369}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}]).
+-define(CfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}]).
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).

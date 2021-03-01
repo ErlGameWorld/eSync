@@ -31,7 +31,6 @@
     [ 
         {eSync，
     	    [
-    	        {listenPort, 12369},
                 {compileCmd, undefined},
                 {extraDirs, undefined}
                 {log, all},     

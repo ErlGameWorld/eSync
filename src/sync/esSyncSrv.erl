@@ -96,9 +96,9 @@ init(_Args) ->
 
 handleAfter(?None, waiting, State) ->
    %% 启动tcp 异步监听 然后启动文件同步应用 启动定时器  等待建立连接 超时 就表示文件同步应用启动失败了 报错
-   ListenPort = ?esCfgSync:getv(?listenPort),
-   case gen_tcp:listen(ListenPort, ?TCP_DEFAULT_OPTIONS) of
+   case gen_tcp:listen(0, ?TCP_DEFAULT_OPTIONS) of
       {ok, LSock} ->
+         {ok, ListenPort} = inet:port(LSock),
          case prim_inet:async_accept(LSock, -1) of
             {ok, _Ref} ->
                {ok, SockMod} = inet_db:lookup_socket(LSock),
@@ -122,7 +122,7 @@ handleAfter(?None, waiting, State) ->
                {kpS, State, {sTimeout, 2000, waitConnOver}}
          end;
       {error, Reason} ->
-         Msg = io_lib:format("failed to listen on ~p - ~p (~s) ~n", [ListenPort, Reason, inet:format_error(Reason)]),
+         Msg = io_lib:format("failed to listen ~p (~s) ~n", [Reason, inet:format_error(Reason)]),
          esUtils:logErrors(Msg),
          {kpS, State, {sTimeout, 2000, waitConnOver}}
    end.

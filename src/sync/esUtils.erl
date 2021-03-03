@@ -341,7 +341,6 @@ mergeExtraDirs(IsAddPath) ->
                            begin
                               case IsAddPath of
                                  true ->
-
                                     case proplists:get_value(outdir, Opts) of
                                        undefined ->
                                           true;
@@ -863,19 +862,21 @@ doMathEveryLine(IoDevice, HrlFileBaseName) ->
          false
    end.
 
-classifyChangeFile([], Beams, Hrls, Srcs) ->
-   {Beams, Hrls, Srcs};
-classifyChangeFile([OneFile | LeftFile], Beams, Hrls, Srcs) ->
+classifyChangeFile([], Beams, Hrls, Srcs, Configs) ->
+   {Beams, Hrls, Srcs, Configs};
+classifyChangeFile([OneFile | LeftFile], Beams, Hrls, Srcs, Configs) ->
    case filename:extension(OneFile) of
       <<".beam">> ->
          Module = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
-         classifyChangeFile(LeftFile, [Module | Beams], Hrls, Srcs);
+         classifyChangeFile(LeftFile, [Module | Beams], Hrls, Srcs, Configs);
       <<".hrl">> ->
-         classifyChangeFile(LeftFile, Beams, [OneFile | Hrls], Srcs);
+         classifyChangeFile(LeftFile, Beams, [OneFile | Hrls], Srcs, Configs);
+      <<".config">> ->
+         classifyChangeFile(LeftFile, Beams, Hrls, Srcs, [OneFile | Configs]);
       <<>> ->
-         classifyChangeFile(LeftFile, Beams, Hrls, Srcs);
+         classifyChangeFile(LeftFile, Beams, Hrls, Srcs, Configs);
       _ ->
-         classifyChangeFile(LeftFile, Beams, Hrls, [OneFile | Srcs])
+         classifyChangeFile(LeftFile, Beams, Hrls, [OneFile | Srcs], Configs)
    end.
 
 addNewFile([], SrcFiles) ->

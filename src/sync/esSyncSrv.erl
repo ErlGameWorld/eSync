@@ -38,8 +38,7 @@
    srcFiles = #{} :: map()
    , onsyncFun = undefined
    , swSyncNode = false
-   , sockMod = undefined
-   , sock = undefined
+   , port = undefined
 }).
 
 %% ************************************  API start ***************************
@@ -95,37 +94,11 @@ init(_Args) ->
    {ok, waiting, #state{}, {doAfter, ?None}}.
 
 handleAfter(?None, waiting, State) ->
-   %% 启动tcp 异步监听 然后启动文件同步应用 启动定时器  等待建立连接 超时 就表示文件同步应用启动失败了 报错
-   case gen_tcp:listen(0, ?TCP_DEFAULT_OPTIONS) of
-      {ok, LSock} ->
-         {ok, ListenPort} = inet:port(LSock),
-         case prim_inet:async_accept(LSock, -1) of
-            {ok, _Ref} ->
-               {ok, SockMod} = inet_db:lookup_socket(LSock),
-               spawn(fun() ->
-                  case os:type() of
-                     {win32, _Osname} ->
-                        CmtStr = "start " ++ esUtils:fileSyncPath("fileSync.exe") ++ " ./ " ++ integer_to_list(ListenPort),
-                        CmdRet = os:cmd(CmtStr),
-                        RetMsg = io_lib:format("the os:cmd start fileSync CmtStr:~p ret:~p ~n ", [CmtStr, CmdRet]),
-                        esUtils:logErrors(RetMsg);
-                     _ ->
-                        CmtStr = esUtils:fileSyncPath("fileSync") ++  " ./ " ++ integer_to_list(ListenPort),
-                        CmdRet = os:cmd(CmtStr),
-                        RetMsg = io_lib:format("the os:cmd start fileSync CmtStr:~p ret:~p ~n ", [CmtStr, CmdRet]),
-                        esUtils:logErrors(RetMsg)
-                  end end),
-               {kpS, State#state{sockMod = SockMod}, {sTimeout, 4000, waitConnOver}};
-            {error, Reason} ->
-               Msg = io_lib:format("init prim_inet:async_accept error ~p~n", [Reason]),
-               esUtils:logErrors(Msg),
-               {kpS, State, {sTimeout, 2000, waitConnOver}}
-         end;
-      {error, Reason} ->
-         Msg = io_lib:format("failed to listen ~p (~s) ~n", [Reason, inet:format_error(Reason)]),
-         esUtils:logErrors(Msg),
-         {kpS, State, {sTimeout, 2000, waitConnOver}}
-   end.
+   %% 启动port 发送监听目录信息
+   PortName = esUtils:fileSyncPath("fileSync"),
+   Opts = [{packet, 4}, binary, exit_status, use_stdio],
+   Port = erlang:open_port({spawn_executable, PortName}, Opts),
+   {kpS, State#state{port = Port}, {sTimeout, 4000, waitConnOver}}.
 
 handleCall(miGetOnsync, _, #state{onsyncFun = OnSync} = State, _From) ->
    {reply, OnSync, State};
@@ -153,10 +126,11 @@ handleCast(miRescan, _, State) ->
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
-handleInfo({tcp, _Socket, Data}, running, #state{srcFiles = SrcFiles, onsyncFun = OnsyncFun, swSyncNode = SwSyncNode} = State) ->
+handleInfo({_Port, {data, Data}}, running, #state{srcFiles = SrcFiles, onsyncFun = OnsyncFun, swSyncNode = SwSyncNode} = State) ->
    FileList = binary:split(Data, <<"\r\n">>, [global]),
    %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
-   {Beams, Hrls, Srcs} = esUtils:classifyChangeFile(FileList, [], [], []),
+   {Beams, Hrls, Srcs, Configs} = esUtils:classifyChangeFile(FileList, [], [], [], []),
+   esUtils:fireOnsync(OnsyncFun, Configs),
    esUtils:reloadChangedMod(Beams, SwSyncNode, OnsyncFun, []),
    case ?esCfgSync:getv(?compileCmd) of
       undefined ->
@@ -185,45 +159,40 @@ handleInfo({tcp, _Socket, Data}, running, #state{srcFiles = SrcFiles, onsyncFun 
          end,
          kpS_S
    end;
-handleInfo({inet_async, LSock, _Ref, Msg}, _, #state{sockMod = SockMod} = State) ->
-   case Msg of
-      {ok, Sock} ->
-         %% make it look like gen_tcp:accept
-         inet_db:register_socket(Sock, SockMod),
-         inet:setopts(Sock, [{active, true}]),
-         prim_inet:async_accept(LSock, -1),
-
-         %% 建立了连接 先发送监听目录配置
+handleInfo({_Port, {data, Data}}, _, #state{port = Port} = State) ->
+   case Data of
+      <<"init">> ->
+         %% port启动成功 先发送监听目录配置
          {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
          AddStr = string:join([filename:nativename(OneDir) || OneDir <- AddSrcDirs], "|"),
          OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
          DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
          AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
-         gen_tcp:send(Sock, AllStr),
+         erlang:port_command(Port, AllStr),
          esUtils:logSuccess("eSync connect fileSync success..."),
          case ?esCfgSync:getv(?compileCmd) of
             undefined ->
                %% 然后收集一下监听目录下的src文件
                SrcFiles = esUtils:collSrcFiles(true),
-               {nextS, running, State#state{sock = Sock, srcFiles = SrcFiles}};
+               {nextS, running, State#state{srcFiles = SrcFiles}};
             _ ->
                {nextS, running, State}
          end;
-      {error, closed} ->
-         Msg = io_lib:format("error, closed listen sock error ~p~n", [closed]),
+      _ ->
+         Msg = io_lib:format("error, esSyncSrv receive unexpect port msg ~p~n", [Data]),
          esUtils:logErrors(Msg),
-         {stop, normal};
-      {error, Reason} ->
-         Msg = io_lib:format("listen sock error ~p~n", [Reason]),
-         esUtils:logErrors(Msg),
-         {stop, {lsock, Reason}}
+         kpS_S
    end;
-handleInfo({tcp_closed, _Socket}, running, _State) ->
-   Msg = io_lib:format("esSyncSrv receive tcp_closed ~n", []),
+handleInfo({_Port, closed}, running, _State) ->
+   Msg = io_lib:format("esSyncSrv receive port closed ~n", []),
    esUtils:logErrors(Msg),
    kpS_S;
-handleInfo({tcp_error, _Socket, Reason}, running, _State) ->
-   Msg = io_lib:format("esSyncSrv receive tcp_error Reason:~p ~n", [Reason]),
+handleInfo({'EXIT', _Port, Reason}, running, _State) ->
+   Msg = io_lib:format("esSyncSrv receive port exit Reason:~p ~n", [Reason]),
+   esUtils:logErrors(Msg),
+   kpS_S;
+handleInfo({_Port, {exit_status, Status}}, running, _State) ->
+   Msg = io_lib:format("esSyncSrv receive port exit_status Status:~p ~n", [Status]),
    esUtils:logErrors(Msg),
    kpS_S;
 handleInfo(_Msg, _, _State) ->

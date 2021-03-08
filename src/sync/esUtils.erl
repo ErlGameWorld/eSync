@@ -102,8 +102,8 @@ tryGetSrcOptions(SrcDir) ->
                tryGetSrcOptions(NewDirName);
             _ when IsBaseSrcDir ->
                try filelib:fold_files(SrcDir, ".*\\.(erl|dtl|lfe|ex)$", true,
-                  fun(OneFiles, Acc) ->
-                     Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
+                  fun(OneFile, Acc) ->
+                     Mod = binary_to_atom(filename:basename(OneFile, filename:extension(OneFile))),
                      case tryGetModOptions(Mod) of
                         {ok, _Options} = Opts ->
                            throw(Opts);
@@ -192,7 +192,7 @@ getFileType(Source) ->
 determineIncludeDir(IncludeDir, BeamDir, SrcDir) ->
    IncludeBase = filename:basename(IncludeDir),
    case determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) of
-      {ok, _Dir} = RetD  -> RetD;
+      {ok, _Dir} = RetD -> RetD;
       undefined ->
          {ok, Cwd} = file:get_cwd(),
          % Cwd2 = normalizeCaseWindowsDir(Cwd),
@@ -222,7 +222,7 @@ determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) ->
 getRootSrcDirFromSrcDir(SrcDir) ->
    NewDirName = filename:dirname(SrcDir),
    BaseName = filename:basename(SrcDir),
-   case BaseName  of
+   case BaseName of
       ?rootSrcDir ->
          NewDirName;
       _ ->
@@ -368,24 +368,35 @@ mergeExtraDirs(IsAddPath) ->
          lists:foldl(FunMerge, {[], [], []}, ExtraList)
    end.
 
+-define(IIF(Cond, Ret1, Ret2), (case Cond of true -> Ret1; _ -> Ret2 end)).
 collSrcFiles(IsAddPath) ->
    {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
-   CollFiles = filelib:fold_files(filename:absname(<<"./">>), ".*\\.(erl|dtl|lfe|ex)$", true,
-      fun(OneFiles, Acc) ->
-         case isOnlyDir(OnlySrcDirs, OneFiles) of
+   CollFiles = filelib:fold_files(filename:absname(<<"./">>), ".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$", true,
+      fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
+         case isOnlyDir(OnlySrcDirs, OneFile) andalso (not isDelDir(DelSrcDirs, OneFile)) of
             true ->
-               case isDelDir(DelSrcDirs, OneFiles) of
-                  false ->
+               MTimeSec = esUtils:dateTimeToSec(filelib:last_modified(OneFile)),
+               case filename:extension(OneFile) of
+                  <<".beam">> ->
+                     BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+                     setelement(4, Acc, Beams#{BeamMod => MTimeSec});
+                  <<".config">> ->
+                     setelement(3, Acc, Configs#{OneFile => MTimeSec});
+                  <<".hrl">> ->
+                     setelement(2, Acc, Hrls#{OneFile => MTimeSec});
+                  <<>> ->
+                     Acc;
+                  _ ->
                      RootSrcDir =
-                        case getRootSrcDirFromSrcDir(OneFiles) of
+                        case getRootSrcDirFromSrcDir(OneFile) of
                            undefined ->
-                              filename:dirname(OneFiles);
+                              filename:dirname(OneFile);
                            RetSrcDir ->
                               RetSrcDir
                         end,
                      case getOptions(RootSrcDir) of
                         undefined ->
-                           Mod = binary_to_atom(filename:basename(OneFiles, filename:extension(OneFiles))),
+                           Mod = binary_to_atom(filename:basename(OneFile, filename:extension(OneFile))),
                            case getModOptions(Mod) of
                               {ok, Options} ->
                                  setOptions(RootSrcDir, Options);
@@ -395,20 +406,32 @@ collSrcFiles(IsAddPath) ->
                         _ ->
                            ignore
                      end,
-                     Acc#{OneFiles => 1};
-                  _ ->
-                     Acc
+                     setelement(1, Acc, Srcs#{OneFile => MTimeSec})
                end;
             _ ->
                Acc
          end
-      end, #{}),
+      end, {#{}, #{}, #{}, #{}}),
 
    FunCollAdds =
       fun(OneDir, FilesAcc) ->
-         filelib:fold_files(case is_list(OneDir) of true -> list_to_binary(OneDir); _ ->
-            OneDir end, ".*\\.(erl|dtl|lfe|ex)$", true, fun(OneFiles, Acc) ->
-            Acc#{OneFiles => 1} end, FilesAcc)
+         filelib:fold_files(?IIF(is_list(OneDir), list_to_binary(OneDir), OneDir), ".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$", true,
+            fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
+               MTimeSec = esUtils:dateTimeToSec(filelib:last_modified(OneFile)),
+               case filename:extension(OneFile) of
+                  <<".beam">> ->
+                     BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+                     setelement(4, Acc, Beams#{BeamMod => MTimeSec});
+                  <<".config">> ->
+                     setelement(3, Acc, Configs#{OneFile => MTimeSec});
+                  <<".hrl">> ->
+                     setelement(2, Acc, Hrls#{OneFile => MTimeSec});
+                  <<>> ->
+                     Acc;
+                  _ ->
+                     setelement(1, Acc, Srcs#{OneFile => MTimeSec})
+               end
+            end, FilesAcc)
       end,
    lists:foldl(FunCollAdds, CollFiles, AddSrcDirs).
 
@@ -541,7 +564,8 @@ printResults(_Module, SrcFile, [], []) ->
    Msg = io_lib:format("~s Recompiled", [SrcFile]),
    esUtils:logSuccess(lists:flatten(Msg));
 printResults(_Module, SrcFile, [], Warnings) ->
-   formatErrors(fun esUtils:logWarnings/1, SrcFile, [], Warnings), io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)]);
+   formatErrors(fun esUtils:logWarnings/1, SrcFile, [], Warnings),
+   io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)]);
 printResults(_Module, SrcFile, Errors, Warnings) ->
    formatErrors(fun esUtils:logErrors/1, SrcFile, Errors, Warnings).
 
@@ -653,11 +677,15 @@ syncLoadModOnAllNodes(Module) ->
    [FSync(X) || X <- Nodes],
    {ok, NumNodes, Nodes}.
 
-recompileChangeSrcFile([], _SwSyncNode) ->
-   ok;
-recompileChangeSrcFile([File | LeftFile], SwSyncNode) ->
-   recompileSrcFile(File, SwSyncNode),
-   recompileChangeSrcFile(LeftFile, SwSyncNode).
+recompileChangeSrcFile(Iterator, SwSyncNode) ->
+   case maps:next(Iterator) of
+      {File, _V, NextIterator} ->
+         recompileSrcFile(File, SwSyncNode),
+         recompileChangeSrcFile(NextIterator, SwSyncNode);
+      _ ->
+         ok
+   end.
+
 
 erlydtlCompile(SrcFile, Options) ->
    F =
@@ -803,12 +831,35 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
          end
    end.
 
-recompileChangeHrlFile([], _SrcFiles, _SwSyncNode) ->
-   ok;
-recompileChangeHrlFile([Hrl | LeftHrl], SrcFiles, SwSyncNode) ->
-   WhoInclude = whoInclude(Hrl, SrcFiles),
-   [recompileSrcFile(SrcFile, SwSyncNode) || {SrcFile, _} <- maps:to_list(WhoInclude)],
-   recompileChangeHrlFile(LeftHrl, SrcFiles, SwSyncNode).
+recompileChangeHrlFile([], _SrcFiles, CSrcs) ->
+   CSrcs;
+recompileChangeHrlFile([Hrl | LeftHrl], SrcFiles, CSrcs) ->
+   NewCSrcs = whoInclude(Hrl, SrcFiles, CSrcs),
+   recompileChangeHrlFile(LeftHrl, SrcFiles, NewCSrcs).
+
+whoInclude(HrlFile, SrcFiles, CSrcs) ->
+   HrlFileBaseName = filename:basename(HrlFile),
+   doMathEveryFile(maps:iterator(SrcFiles), HrlFileBaseName, CSrcs).
+
+doMathEveryFile(Iterator, HrlFileBaseName, CSrcs) ->
+   case maps:next(Iterator) of
+      {SrcFile, _V, NextIterator} ->
+         case file:open(SrcFile, [read, binary]) of
+            {ok, IoDevice} ->
+               IsInclude = doMathEveryLine(IoDevice, HrlFileBaseName),
+               file:close(IoDevice),
+               case IsInclude of
+                  true ->
+                     doMathEveryFile(NextIterator, HrlFileBaseName, CSrcs#{SrcFile => 1});
+                  _ ->
+                     doMathEveryFile(NextIterator, HrlFileBaseName, CSrcs)
+               end;
+            _ ->
+               doMathEveryFile(NextIterator, HrlFileBaseName, CSrcs)
+         end;
+      _ ->
+         CSrcs
+   end.
 
 %% 注释
 %% whoInclude(HrlFile, SrcFiles) ->
@@ -830,20 +881,6 @@ recompileChangeHrlFile([Hrl | LeftHrl], SrcFiles, SwSyncNode) ->
 %% isInclude(HrlFile, [_SomeForm | Forms]) ->
 %%    isInclude(HrlFile, Forms).
 
-whoInclude(HrlFile, SrcFiles) ->
-   HrlFileBaseName = filename:basename(HrlFile),
-   Pred =
-      fun(SrcFile, _) ->
-         case file:open(SrcFile, [read, binary]) of
-            {ok, IoDevice} ->
-               IsInclude = doMathEveryLine(IoDevice, HrlFileBaseName),
-               file:close(IoDevice),
-               IsInclude;
-            _ ->
-               false
-         end
-      end,
-   maps:filter(Pred, SrcFiles).
 doMathEveryLine(IoDevice, HrlFileBaseName) ->
    case file:read_line(IoDevice) of
       {ok, Data} ->
@@ -862,31 +899,65 @@ doMathEveryLine(IoDevice, HrlFileBaseName) ->
          false
    end.
 
-classifyChangeFile([], Beams, Hrls, Srcs, Configs) ->
-   {Beams, Hrls, Srcs, Configs};
-classifyChangeFile([OneFile | LeftFile], Beams, Hrls, Srcs, Configs) ->
+classifyChangeFile([], Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams) ->
+   {Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams};
+classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams) ->
+   CurMTimeSec = esUtils:dateTimeToSec(filelib:last_modified(OneFile)),
    case filename:extension(OneFile) of
       <<".beam">> ->
-         Module = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
-         classifyChangeFile(LeftFile, [Module | Beams], Hrls, Srcs, Configs);
-      <<".hrl">> ->
-         classifyChangeFile(LeftFile, Beams, [OneFile | Hrls], Srcs, Configs);
+         BinMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+         case ColBeams of
+            #{BinMod := OldMTimeSec} ->
+               case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
+                  true ->
+                     classifyChangeFile(LeftFile, [BinMod | Beams], Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams#{BinMod := CurMTimeSec});
+                  _ ->
+                     classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
+               end;
+            _ ->
+               classifyChangeFile(LeftFile, [BinMod | Beams], Hrls, Srcs, Configs, ColSrcs, ColHrls, ColConfigs, ColBeams#{BinMod => CurMTimeSec})
+         end;
       <<".config">> ->
-         classifyChangeFile(LeftFile, Beams, Hrls, Srcs, [OneFile | Configs]);
+         AbsFile = filename:absname(OneFile),
+         case ColConfigs of
+            #{AbsFile := OldMTimeSec} ->
+               case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
+                  true ->
+                     classifyChangeFile(LeftFile, Beams, [AbsFile | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile := CurMTimeSec}, ColBeams);
+                  _ ->
+                     classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
+               end;
+            _ ->
+               classifyChangeFile(LeftFile, Beams, [AbsFile | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile => CurMTimeSec}, ColBeams)
+         end;
+      <<".hrl">> ->
+         AbsFile = filename:absname(OneFile),
+         case ColHrls of
+            #{AbsFile := OldMTimeSec} ->
+               case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
+                  true ->
+                     classifyChangeFile(LeftFile, Beams, Configs, [AbsFile | Hrls], Srcs, ColSrcs, ColHrls#{AbsFile := CurMTimeSec}, ColConfigs, ColBeams);
+                  _ ->
+                     classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
+               end;
+            _ ->
+               classifyChangeFile(LeftFile, Beams, Configs, [AbsFile | Hrls], Srcs, ColSrcs, ColHrls#{AbsFile => CurMTimeSec}, ColConfigs, ColBeams)
+         end;
       <<>> ->
-         classifyChangeFile(LeftFile, Beams, Hrls, Srcs, Configs);
+         classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams);
       _ ->
-         classifyChangeFile(LeftFile, Beams, Hrls, [OneFile | Srcs], Configs)
-   end.
-
-addNewFile([], SrcFiles) ->
-   SrcFiles;
-addNewFile([OneFile | LeftFile], SrcFiles) ->
-   case SrcFiles of
-      #{OneFile := _value} ->
-         addNewFile(LeftFile, SrcFiles);
-      _ ->
-         addNewFile(LeftFile, SrcFiles#{OneFile => 1})
+         AbsFile = filename:absname(OneFile),
+         case ColSrcs of
+            #{AbsFile := OldMTimeSec} ->
+               case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
+                  true ->
+                     classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs#{AbsFile => 1}, ColSrcs#{AbsFile := CurMTimeSec}, ColHrls, ColConfigs, ColBeams);
+                  _ ->
+                     classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
+               end;
+            _ ->
+               classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs#{AbsFile => 1}, ColSrcs#{AbsFile => CurMTimeSec}, ColHrls, ColConfigs, ColBeams)
+         end
    end.
 
 fileSyncPath(ExecName) ->
@@ -900,4 +971,12 @@ fileSyncPath(ExecName) ->
          end;
       Dir ->
          filename:join(Dir, ExecName)
+   end.
+
+dateTimeToSec(DateTime) ->
+   if
+      DateTime == 0 ->
+         0;
+      true ->
+         erlang:universaltime_to_posixtime(DateTime)
    end.

@@ -36,7 +36,10 @@
 
 -record(state, {
    srcFiles = #{} :: map()
-   , onsyncFun = undefined
+   , hrlFiles = #{} :: map()
+   , configs = #{} :: map()
+   , beams = #{} :: map()
+   , onSyncFun = undefined
    , swSyncNode = false
    , port = undefined
 }).
@@ -81,7 +84,7 @@ getOnsync() ->
    es_gen_ipc:call(?SERVER, miGetOnsync).
 
 setOnsync(Fun) ->
-   es_gen_ipc:call(?SERVER, {miSetOnsync, Fun}).
+   es_gen_ipc:call(?SERVER, {miSetOnSync, Fun}).
 
 %% ************************************  API end   ***************************
 start_link() ->
@@ -100,10 +103,10 @@ handleAfter(?None, waiting, State) ->
    Port = erlang:open_port({spawn_executable, PortName}, Opts),
    {kpS, State#state{port = Port}, {sTimeout, 4000, waitConnOver}}.
 
-handleCall(miGetOnsync, _, #state{onsyncFun = OnSync} = State, _From) ->
-   {reply, OnSync, State};
-handleCall({miSetOnsync, Fun}, _, State, _From) ->
-   {reply, ok, State#state{onsyncFun = Fun}};
+handleCall(miGetOnsync, _, #state{onSyncFun = OnSyncFun} = State, _From) ->
+   {reply, OnSyncFun, State};
+handleCall({miSetOnSync, Fun}, _, State, _From) ->
+   {reply, ok, State#state{onSyncFun = Fun}};
 handleCall(miCurInfo, _, State, _Form) ->
    {reply, {erlang:get(), State}, State};
 handleCall(_Request, _, _State, _From) ->
@@ -121,67 +124,64 @@ handleCast({miSyncNode, IsSync}, _, State) ->
          {kpS, State#state{swSyncNode = false}}
    end;
 handleCast(miRescan, _, State) ->
-   SrcFiles = esUtils:collSrcFiles(false),
-   {kpS_S, State#state{srcFiles = SrcFiles}};
+   {Srcs, Hrls, Configs, Beams} = esUtils:collSrcFiles(false),
+   {kpS_S, State#state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams}};
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
-handleInfo({_Port, {data, Data}}, running, #state{srcFiles = SrcFiles, onsyncFun = OnsyncFun, swSyncNode = SwSyncNode} = State) ->
-   FileList = binary:split(Data, <<"\r\n">>, [global]),
-   %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
-   {Beams, Hrls, Srcs, Configs} = esUtils:classifyChangeFile(FileList, [], [], [], []),
-   esUtils:fireOnsync(OnsyncFun, Configs),
-   esUtils:reloadChangedMod(Beams, SwSyncNode, OnsyncFun, []),
-   case ?esCfgSync:getv(?compileCmd) of
-      undefined ->
-         esUtils:recompileChangeHrlFile(Hrls, SrcFiles, SwSyncNode),
-         esUtils:recompileChangeSrcFile(Srcs, SwSyncNode),
-         NewSrcFiles = esUtils:addNewFile(Srcs, SrcFiles),
-         {kpS, State#state{srcFiles = NewSrcFiles}};
-      CmdStr ->
-         case Srcs =/= [] orelse Hrls =/= [] of
-            true ->
-               RetStr = os:cmd(CmdStr),
-               RetList = string:split(RetStr, "\n", all),
-               CmdMsg = io_lib:format("compile cmd:~p ~n", [CmdStr]),
-               esUtils:logSuccess(CmdMsg),
-               RetMsg = io_lib:format("the result: ~n ", []),
-               esUtils:logSuccess(RetMsg),
-               [
-                  begin
-                     OneMsg = io_lib:format("~p ~n", [OneRet]),
-                     esUtils:logSuccess(OneMsg)
-                  end || OneRet <- RetList, OneRet =/= []
-               ],
-               ok;
-            _ ->
-               ignore
-         end,
-         kpS_S
-   end;
-handleInfo({_Port, {data, Data}}, _, #state{port = Port} = State) ->
-   case Data of
-      <<"init">> ->
-         %% port启动成功 先发送监听目录配置
-         {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
-         AddStr = string:join([filename:nativename(OneDir) || OneDir <- AddSrcDirs], "|"),
-         OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
-         DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
-         AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
-         erlang:port_command(Port, AllStr),
-         esUtils:logSuccess("eSync connect fileSync success..."),
+handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onSyncFun = OnSyncFun, swSyncNode = SwSyncNode} = State) ->
+   case Status of
+      running ->
+         FileList = binary:split(Data, <<"\r\n">>, [global]),
+         %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
+         {CBeams, CConfigs, CHrls, CSrcs, NewSrcs, NewHrls, NewConfigs, NewBeams} = esUtils:classifyChangeFile(FileList, [], [], [], #{}, Srcs, Hrls, Configs, Beams),
+         esUtils:fireOnsync(OnSyncFun, CConfigs),
+         esUtils:reloadChangedMod(CBeams, SwSyncNode, OnSyncFun, []),
          case ?esCfgSync:getv(?compileCmd) of
             undefined ->
-               %% 然后收集一下监听目录下的src文件
-               SrcFiles = esUtils:collSrcFiles(true),
-               {nextS, running, State#state{srcFiles = SrcFiles}};
-            _ ->
-               {nextS, running, State}
+               NReSrcs = esUtils:recompileChangeHrlFile(CHrls, NewSrcs, CSrcs),
+               esUtils:recompileChangeSrcFile(maps:iterator(NReSrcs), SwSyncNode),
+               {kpS, State#state{srcFiles = NewSrcs, hrlFiles = NewHrls, configs = NewConfigs, beams = NewBeams}};
+            CmdStr ->
+               case maps:size(CSrcs) > 0 orelse CHrls =/= [] of
+                  true ->
+                     RetStr = os:cmd(CmdStr),
+                     RetList = string:split(RetStr, "\n", all),
+                     CmdMsg = io_lib:format("compile cmd:~p ~n", [CmdStr]),
+                     esUtils:logSuccess(CmdMsg),
+                     RetMsg = io_lib:format("the result: ~n ", []),
+                     esUtils:logSuccess(RetMsg),
+                     [
+                        begin
+                           OneMsg = io_lib:format("~p ~n", [OneRet]),
+                           esUtils:logSuccess(OneMsg)
+                        end || OneRet <- RetList, OneRet =/= []
+                     ],
+                     ok;
+                  _ ->
+                     ignore
+               end,
+               kpS_S
          end;
       _ ->
-         Msg = io_lib:format("error, esSyncSrv receive unexpect port msg ~p~n", [Data]),
-         esUtils:logErrors(Msg),
-         kpS_S
+         case Data of
+            <<"init">> ->
+               %% port启动成功 先发送监听目录配置
+               {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
+               AddStr = string:join([filename:nativename(OneDir) || OneDir <- AddSrcDirs], "|"),
+               OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
+               DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
+               AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
+               erlang:port_command(Port, AllStr),
+               esUtils:logSuccess("eSync connect fileSync success..."),
+               %% 然后收集一下监听目录下的src文件
+               {BSrcs, BHrls, BConfigs, BBeams} = esUtils:collSrcFiles(true),
+               {nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}};
+            _ ->
+               ErrMsg = io_lib:format("error, esSyncSrv receive unexpect port msg ~p~n", [Data]),
+               esUtils:logErrors(ErrMsg),
+               kpS_S
+         end
    end;
 handleInfo({_Port, closed}, running, _State) ->
    Msg = io_lib:format("esSyncSrv receive port closed ~n", []),

@@ -831,34 +831,50 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
          end
    end.
 
-recompileChangeHrlFile([], _SrcFiles, CSrcs) ->
+collIncludeCHrls([], AllHrls, CHrls, NewAddMap) ->
+   case maps:size(NewAddMap) > 0 of
+      true ->
+         collIncludeCHrls(maps:keys(NewAddMap), AllHrls, CHrls, #{});
+      _ ->
+         CHrls
+   end;
+collIncludeCHrls([OneHrl | LeftCHrls], AllHrls, CHrls, NewAddMap) ->
+   {NewCHrls, NNewAddMap} = whoInclude(OneHrl, AllHrls, CHrls, NewAddMap),
+   collIncludeCHrls(LeftCHrls, AllHrls, NewCHrls, NNewAddMap).
+
+collIncludeCErls([], _SrcFiles, CSrcs, _NewAddMap) ->
    CSrcs;
-recompileChangeHrlFile([Hrl | LeftHrl], SrcFiles, CSrcs) ->
-   NewCSrcs = whoInclude(Hrl, SrcFiles, CSrcs),
-   recompileChangeHrlFile(LeftHrl, SrcFiles, NewCSrcs).
+collIncludeCErls([Hrl | LeftHrl], SrcFiles, CSrcs, NewAddMap) ->
+   {NewCSrcs, NNewAddMap} = whoInclude(Hrl, SrcFiles, CSrcs, NewAddMap),
+   collIncludeCErls(LeftHrl, SrcFiles, NewCSrcs, NNewAddMap).
 
-whoInclude(HrlFile, SrcFiles, CSrcs) ->
+whoInclude(HrlFile, AllFiles, CFiles, NewAddMap) ->
    HrlFileBaseName = filename:basename(HrlFile),
-   doMathEveryFile(maps:iterator(SrcFiles), HrlFileBaseName, CSrcs).
+   doMathEveryFile(maps:iterator(AllFiles), HrlFileBaseName, CFiles, NewAddMap).
 
-doMathEveryFile(Iterator, HrlFileBaseName, CSrcs) ->
+doMathEveryFile(Iterator, HrlFileBaseName, CFiles, NewAddMap) ->
    case maps:next(Iterator) of
-      {SrcFile, _V, NextIterator} ->
-         case file:open(SrcFile, [read, binary]) of
+      {OneFile, _V, NextIterator} ->
+         case file:open(OneFile, [read, binary]) of
             {ok, IoDevice} ->
                IsInclude = doMathEveryLine(IoDevice, HrlFileBaseName),
                file:close(IoDevice),
                case IsInclude of
                   true ->
-                     doMathEveryFile(NextIterator, HrlFileBaseName, CSrcs#{SrcFile => 1});
+                     case maps:is_key(OneFile, CFiles) of
+                        true ->
+                           doMathEveryFile(NextIterator, HrlFileBaseName, CFiles, NewAddMap);
+                        _ ->
+                           doMathEveryFile(NextIterator, HrlFileBaseName, CFiles#{OneFile => 1}, NewAddMap#{OneFile => 1})
+                     end;
                   _ ->
-                     doMathEveryFile(NextIterator, HrlFileBaseName, CSrcs)
+                     doMathEveryFile(NextIterator, HrlFileBaseName, CFiles, NewAddMap)
                end;
             _ ->
-               doMathEveryFile(NextIterator, HrlFileBaseName, CSrcs)
+               doMathEveryFile(NextIterator, HrlFileBaseName, CFiles, NewAddMap)
          end;
       _ ->
-         CSrcs
+         {CFiles, NewAddMap}
    end.
 
 %% 注释
@@ -936,12 +952,12 @@ classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, Co
             #{AbsFile := OldMTimeSec} ->
                case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
                   true ->
-                     classifyChangeFile(LeftFile, Beams, Configs, [AbsFile | Hrls], Srcs, ColSrcs, ColHrls#{AbsFile := CurMTimeSec}, ColConfigs, ColBeams);
+                     classifyChangeFile(LeftFile, Beams, Configs, Hrls#{AbsFile => 1}, Srcs, ColSrcs, ColHrls#{AbsFile := CurMTimeSec}, ColConfigs, ColBeams);
                   _ ->
                      classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
                end;
             _ ->
-               classifyChangeFile(LeftFile, Beams, Configs, [AbsFile | Hrls], Srcs, ColSrcs, ColHrls#{AbsFile => CurMTimeSec}, ColConfigs, ColBeams)
+               classifyChangeFile(LeftFile, Beams, Configs, Hrls#{AbsFile => 1}, Srcs, ColSrcs, ColHrls#{AbsFile => CurMTimeSec}, ColConfigs, ColBeams)
          end;
       <<>> ->
          classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams);

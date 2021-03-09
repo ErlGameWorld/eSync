@@ -134,12 +134,13 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
       running ->
          FileList = binary:split(Data, <<"\r\n">>, [global]),
          %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
-         {CBeams, CConfigs, CHrls, CSrcs, NewSrcs, NewHrls, NewConfigs, NewBeams} = esUtils:classifyChangeFile(FileList, [], [], [], #{}, Srcs, Hrls, Configs, Beams),
+         {CBeams, CConfigs, CHrls, CSrcs, NewSrcs, NewHrls, NewConfigs, NewBeams} = esUtils:classifyChangeFile(FileList, [], [], #{}, #{}, Srcs, Hrls, Configs, Beams),
          esUtils:fireOnsync(OnSyncFun, CConfigs),
          esUtils:reloadChangedMod(CBeams, SwSyncNode, OnSyncFun, []),
          case ?esCfgSync:getv(?compileCmd) of
             undefined ->
-               NReSrcs = esUtils:recompileChangeHrlFile(CHrls, NewSrcs, CSrcs),
+               LastCHrls = esUtils:collIncludeCHrls(maps:keys(CHrls), NewHrls, CHrls, #{}),
+               NReSrcs =  esUtils:collIncludeCErls(maps:keys(LastCHrls), NewSrcs, CSrcs, #{}),
                esUtils:recompileChangeSrcFile(maps:iterator(NReSrcs), SwSyncNode),
                {kpS, State#state{srcFiles = NewSrcs, hrlFiles = NewHrls, configs = NewConfigs, beams = NewBeams}};
             CmdStr ->

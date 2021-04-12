@@ -8,9 +8,12 @@
    curInfo/0,
    setLog/1,
    getLog/0,
-   getOnsync/0,
-   setOnsync/0,
-   setOnsync/1,
+   getOnMSync/0,
+   setOnMSync/0,
+   setOnMSync/1,
+   getOnCSync/0,
+   setOnCSync/0,
+   setOnCSync/1,
    swSyncNode/1
 ]).
 
@@ -47,14 +50,23 @@ setLog(Val) ->
 getLog() ->
    esSyncSrv:getLog().
 
-getOnsync() ->
-   esSyncSrv:getOnsync().
+getOnMSync() ->
+   esSyncSrv:getOnMSync().
 
-setOnsync() ->
-   esSyncSrv:setOnsync(undefined).
+setOnMSync() ->
+   esSyncSrv:setOnMSync(undefined).
 
-setOnsync(Fun) ->
-   esSyncSrv:setOnsync(Fun).
+setOnMSync(Fun) ->
+   esSyncSrv:setOnMSync(Fun).
+
+getOnCSync() ->
+   esSyncSrv:getOnCSync().
+
+setOnCSync() ->
+   esSyncSrv:setOnCSync(undefined).
+
+setOnCSync(Fun) ->
+   esSyncSrv:setOnCSync(Fun).
 
 
 

@@ -15,8 +15,10 @@
    setLog/1,
    getLog/0,
    curInfo/0,
-   getOnsync/0,
-   setOnsync/1,
+   getOnMSync/0,
+   setOnMSync/1,
+   getOnCSync/0,
+   setOnCSync/1,
    swSyncNode/1
 ]).
 
@@ -39,7 +41,8 @@
    , hrlFiles = #{} :: map()
    , configs = #{} :: map()
    , beams = #{} :: map()
-   , onSyncFun = undefined
+   , onMSyncFun = undefined
+   , onCSyncFun = undefined
    , swSyncNode = false
    , port = undefined
 }).
@@ -80,11 +83,17 @@ swSyncNode(IsSync) ->
    es_gen_ipc:cast(?SERVER, {miSyncNode, IsSync}),
    ok.
 
-getOnsync() ->
-   es_gen_ipc:call(?SERVER, miGetOnsync).
+getOnMSync() ->
+   es_gen_ipc:call(?SERVER, miGetOnMSync).
 
-setOnsync(Fun) ->
-   es_gen_ipc:call(?SERVER, {miSetOnSync, Fun}).
+setOnMSync(Fun) ->
+   es_gen_ipc:call(?SERVER, {miSetOnMSync, Fun}).
+
+getOnCSync() ->
+   es_gen_ipc:call(?SERVER, miGetOnCSync).
+
+setOnCSync(Fun) ->
+   es_gen_ipc:call(?SERVER, {miSetOnCSync, Fun}).
 
 %% ************************************  API end   ***************************
 start_link() ->
@@ -94,7 +103,7 @@ start_link() ->
 init(_Args) ->
    erlang:process_flag(trap_exit, true),
    esUtils:loadCfg(),
-   {ok, waiting, #state{}, {doAfter, ?None}}.
+   {ok, waiting, #state{onMSyncFun = ?esCfgSync:getv(?onMSyncFun), onCSyncFun = ?esCfgSync:getv(?onCSyncFun), swSyncNode = ?esCfgSync:getv(?swSyncNode)}, {doAfter, ?None}}.
 
 handleAfter(?None, waiting, State) ->
    %% 启动port 发送监听目录信息
@@ -103,10 +112,14 @@ handleAfter(?None, waiting, State) ->
    Port = erlang:open_port({spawn_executable, PortName}, Opts),
    {kpS, State#state{port = Port}, {sTimeout, 4000, waitConnOver}}.
 
-handleCall(miGetOnsync, _, #state{onSyncFun = OnSyncFun} = State, _From) ->
-   {reply, OnSyncFun, State};
-handleCall({miSetOnSync, Fun}, _, State, _From) ->
-   {reply, ok, State#state{onSyncFun = Fun}};
+handleCall(miGetOnMSync, _, #state{onMSyncFun = OnMSyncFun} = State, _From) ->
+   {reply, OnMSyncFun, State};
+handleCall({miSetOnMSync, Fun}, _, State, _From) ->
+   {reply, ok, State#state{onMSyncFun = Fun}};
+handleCall(miGetOnCSync, _, #state{onCSyncFun = OnCSyncFun} = State, _From) ->
+   {reply, OnCSyncFun, State};
+handleCall({miSetOnCSync, Fun}, _, State, _From) ->
+   {reply, ok, State#state{onCSyncFun = Fun}};
 handleCall(miCurInfo, _, State, _Form) ->
    {reply, {erlang:get(), State}, State};
 handleCall(_Request, _, _State, _From) ->
@@ -129,14 +142,14 @@ handleCast(miRescan, _, State) ->
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
-handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onSyncFun = OnSyncFun, swSyncNode = SwSyncNode} = State) ->
+handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onMSyncFun = OnMSyncFun, onCSyncFun = OnCSyncFun, swSyncNode = SwSyncNode} = State) ->
    case Status of
       running ->
          FileList = binary:split(Data, <<"\r\n">>, [global]),
          %% 收集改动了beam hrl src 文件 然后执行相应的逻辑
          {CBeams, CConfigs, CHrls, CSrcs, NewSrcs, NewHrls, NewConfigs, NewBeams} = esUtils:classifyChangeFile(FileList, [], [], #{}, #{}, Srcs, Hrls, Configs, Beams),
-         esUtils:fireOnsync(OnSyncFun, CConfigs),
-         esUtils:reloadChangedMod(CBeams, SwSyncNode, OnSyncFun, []),
+         esUtils:fireOnSync(OnCSyncFun, CConfigs),
+         esUtils:reloadChangedMod(CBeams, SwSyncNode, OnMSyncFun, []),
          case ?esCfgSync:getv(?compileCmd) of
             undefined ->
                LastCHrls = esUtils:collIncludeCHrls(maps:keys(CHrls), NewHrls, CHrls, #{}),

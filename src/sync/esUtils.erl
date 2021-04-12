@@ -552,7 +552,7 @@ setOptions(SrcDir, Options) ->
    end.
 
 loadCfg() ->
-   KVs = [{Key, esUtils:getEnv(Key, DefVal)} || {Key, DefVal} <- ?CfgList],
+   KVs = [{Key, esUtils:getEnv(Key, DefVal)} || {Key, DefVal} <- ?DefCfgList],
    esUtils:load(?esCfgSync, KVs).
 
 %% *******************************  加载与编译相关 **********************************************************************
@@ -592,29 +592,39 @@ formatError(Module, ErrorDescription) ->
       false -> io_lib:format("~s", [ErrorDescription])
    end.
 
-fireOnsync(OnsyncFun, Modules) ->
-   case OnsyncFun of
+fireOnSync(OnSyncFun, Modules) ->
+   case OnSyncFun of
       undefined -> ok;
-      Funs when is_list(Funs) -> onsyncApplyList(Funs, Modules);
-      Fun -> onsyncApply(Fun, Modules)
+      Funs when is_list(Funs) -> onSyncApplyList(Funs, Modules);
+      Fun -> onSyncApply(Fun, Modules)
    end.
 
-onsyncApplyList(Funs, Modules) ->
-   [onsyncApply(Fun, Modules) || Fun <- Funs].
+onSyncApplyList(Funs, Modules) ->
+   [onSyncApply(Fun, Modules) || Fun <- Funs].
 
-onsyncApply({M, F}, Modules) ->
-   erlang:apply(M, F, [Modules]);
-onsyncApply(Fun, Modules) when is_function(Fun) ->
-   Fun(Modules).
+onSyncApply({M, F}, Modules) ->
+   try erlang:apply(M, F, [Modules])
+   catch
+      C:R:S ->
+         Msg = io_lib:format("apply sync fun ~p:~p(~p)  error ~p", [M, F, Modules, {C, R, S}]),
+         esUtils:logErrors(Msg)
+   end;
+onSyncApply(Fun, Modules) when is_function(Fun) ->
+   try Fun(Modules)
+   catch
+      C:R:S ->
+         Msg = io_lib:format("apply sync fun ~p(~p)  error ~p", [Fun, Modules, {C, R, S}]),
+         esUtils:logErrors(Msg)
+   end.
 
-reloadChangedMod([], _SwSyncNode, OnsyncFun, Acc) ->
-   fireOnsync(OnsyncFun, Acc);
-reloadChangedMod([Module | LeftMod], SwSyncNode, OnsyncFun, Acc) ->
+reloadChangedMod([], _SwSyncNode, OnSyncFun, Acc) ->
+   fireOnSync(OnSyncFun, Acc);
+reloadChangedMod([Module | LeftMod], SwSyncNode, OnSyncFun, Acc) ->
    case code:get_object_code(Module) of
       error ->
          Msg = io_lib:format("Error loading object code for ~p", [Module]),
          esUtils:logErrors(Msg),
-         reloadChangedMod(LeftMod, SwSyncNode, OnsyncFun, Acc);
+         reloadChangedMod(LeftMod, SwSyncNode, OnSyncFun, Acc);
       {Module, Binary, Filename} ->
          case code:load_binary(Module, Filename, Binary) of
             {module, Module} ->
@@ -632,7 +642,7 @@ reloadChangedMod([Module | LeftMod], SwSyncNode, OnsyncFun, Acc) ->
             false ->
                ignore
          end,
-         reloadChangedMod(LeftMod, SwSyncNode, OnsyncFun, [Module | Acc])
+         reloadChangedMod(LeftMod, SwSyncNode, OnSyncFun, [Module | Acc])
    end.
 
 getNodes() ->
@@ -686,7 +696,6 @@ recompileChangeSrcFile(Iterator, SwSyncNode) ->
          ok
    end.
 
-
 erlydtlCompile(SrcFile, Options) ->
    F =
       fun({outdir, OutDir}, Acc) -> [{out_dir, OutDir} | Acc];
@@ -731,7 +740,6 @@ getObjectCode(Module) ->
       {Module, B, Filename} -> {B, Filename};
       _ -> {undefined, undefined}
    end.
-
 
 reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
    case Binary =/= OldBinary of
@@ -931,7 +939,7 @@ classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, Co
                      classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
                end;
             _ ->
-               classifyChangeFile(LeftFile, [BinMod | Beams], Hrls, Srcs, Configs, ColSrcs, ColHrls, ColConfigs, ColBeams#{BinMod => CurMTimeSec})
+               classifyChangeFile(LeftFile, [BinMod | Beams], Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams#{BinMod => CurMTimeSec})
          end;
       <<".config">> ->
          AbsFile = filename:absname(OneFile),
@@ -939,12 +947,14 @@ classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, Co
             #{AbsFile := OldMTimeSec} ->
                case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
                   true ->
-                     classifyChangeFile(LeftFile, Beams, [AbsFile | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile := CurMTimeSec}, ColBeams);
+                     CfgMod = erlang:binary_to_atom(filename:basename(AbsFile, <<".config">>), utf8),
+                     classifyChangeFile(LeftFile, Beams, [CfgMod | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile := CurMTimeSec}, ColBeams);
                   _ ->
                      classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
                end;
             _ ->
-               classifyChangeFile(LeftFile, Beams, [AbsFile | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile => CurMTimeSec}, ColBeams)
+               CfgMod = erlang:binary_to_atom(filename:basename(AbsFile, <<".config">>), utf8),
+               classifyChangeFile(LeftFile, Beams, [CfgMod | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile => CurMTimeSec}, ColBeams)
          end;
       <<".hrl">> ->
          AbsFile = filename:absname(OneFile),

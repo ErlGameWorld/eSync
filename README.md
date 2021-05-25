@@ -41,7 +41,10 @@
                 {compileCmd, undefined},
                 {extraDirs, undefined}
                 {log, all},     
-                {descendant, fix}
+                {descendant, fix},
+                {onMSyncFun, undefined},
+                {onCSyncFun, undefined},
+                {swSyncNode, false}
             ]      
         } 
     ]

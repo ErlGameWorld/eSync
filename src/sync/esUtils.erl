@@ -1,6 +1,22 @@
 -module(esUtils).
 
--include("eSync.hrl").
+%%%%%%%%%%%%%%%%%%%%%%%% eSync.hrl start %%%%%%%%%%%%%%%%%%%%%%
+-define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
+
+-define(Log, log).
+-define(compileCmd, compileCmd).
+-define(extraDirs, extraDirs).
+-define(descendant, descendant).
+-define(onMSyncFun, onMSyncFun).
+-define(onCSyncFun, onCSyncFun).
+-define(swSyncNode, swSyncNode).
+
+-define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}]).
+
+-define(esCfgSync, esCfgSync).
+-define(rootSrcDir, <<"src">>).
+
+%%%%%%%%%%%%%%%%%%%%%%%% eSync.hrl end %%%%%%%%%%%%%%%%%%%%%%
 
 -compile(inline).
 -compile({inline_size, 128}).
@@ -61,8 +77,7 @@ getModOptions(Module) ->
             Options6 = addFileType(Module, Options5),
             {ok, Options6}
          catch ExType:Error ->
-            Msg = [io_lib:format("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error])],
-            logWarnings(Msg),
+            logWarnings("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error]),
             undefined
          end;
       _ ->
@@ -115,8 +130,7 @@ tryGetSrcOptions(SrcDir) ->
                   {ok, _Options} = Opts ->
                      Opts;
                   _ExType:_Error ->
-                     Msg = [io_lib:format("looking src options error ~p:~p. ~n", [_ExType, _Error])],
-                     logWarnings(Msg),
+                     logWarnings("looking src options error ~p:~p. ~n", [_ExType, _Error]),
                      undefined
                end;
             _ ->
@@ -466,14 +480,20 @@ getEnv(Var, Default) ->
 setEnv(Var, Val) ->
    ok = application:set_env(eSync, Var, Val).
 
-logSuccess(Message) ->
-   canLog(success) andalso error_logger:info_msg(lists:flatten(Message)).
+logSuccess(Format) ->
+   canLog(success) andalso logger:notice(Format).
+logSuccess(Format, Args) ->
+   canLog(success) andalso logger:notice(Format, Args).
 
-logErrors(Message) ->
-   canLog(errors) andalso error_logger:error_msg(lists:flatten(Message)).
+logErrors(Format) ->
+   canLog(errors) andalso logger:error(Format).
+logErrors(Format, Args) ->
+   canLog(errors) andalso logger:error(Format, Args).
 
-logWarnings(Message) ->
-   canLog(warnings) andalso error_logger:warning_msg(lists:flatten(Message)).
+logWarnings(Format) ->
+   canLog(warnings) andalso logger:warning(Format) .
+logWarnings(Format, Args) ->
+   canLog(warnings) andalso logger:warning(Format, Args) .
 
 canLog(MsgType) ->
    case esSyncSrv:getLog() of
@@ -557,17 +577,14 @@ loadCfg() ->
 
 %% *******************************  加载与编译相关 **********************************************************************
 errorNoFile(Module) ->
-   Msg = io_lib:format("~p Couldn't load module: nofile", [Module]),
-   esUtils:logWarnings([Msg]).
+   esUtils:logWarnings(["~p Couldn't load module: nofile", [Module]]).
 
 printResults(_Module, SrcFile, [], []) ->
-   Msg = io_lib:format("~s Recompiled", [SrcFile]),
-   esUtils:logSuccess(lists:flatten(Msg));
+   esUtils:logSuccess("~s Recompiled", [SrcFile]);
 printResults(_Module, SrcFile, [], Warnings) ->
-   formatErrors(fun esUtils:logWarnings/1, SrcFile, [], Warnings),
-   io_lib:format("~s Recompiled with ~p warnings", [SrcFile, length(Warnings)]);
+   formatErrors(fun esUtils:logWarnings/2, SrcFile, [], Warnings);
 printResults(_Module, SrcFile, Errors, Warnings) ->
-   formatErrors(fun esUtils:logErrors/1, SrcFile, Errors, Warnings).
+   formatErrors(fun esUtils:logErrors/2, SrcFile, Errors, Warnings).
 
 
 %% @private Print error messages in a pretty and user readable way.
@@ -580,8 +597,7 @@ formatErrors(LogFun, File, Errors, Warnings) ->
    FPck =
       fun({Line, Prefix, Module, ErrorDescription}) ->
          Msg = formatError(Module, ErrorDescription),
-         LogMsg = io_lib:format("~s: ~p: ~s: ~s", [File, Line, Prefix, Msg]),
-         LogFun(LogMsg)
+         LogFun("~s: ~p: ~s: ~s", [File, Line, Prefix, Msg])
       end,
    [FPck(X) || X <- Everything],
    ok.
@@ -606,41 +622,31 @@ onSyncApply({M, F}, Modules) ->
    try erlang:apply(M, F, [Modules])
    catch
       C:R:S ->
-         Msg = io_lib:format("apply sync fun ~p:~p(~p)  error ~p", [M, F, Modules, {C, R, S}]),
-         esUtils:logErrors(Msg)
+         esUtils:logErrors("apply sync fun ~p:~p(~p)  error ~p", [M, F, Modules, {C, R, S}])
    end;
 onSyncApply(Fun, Modules) when is_function(Fun) ->
    try Fun(Modules)
    catch
       C:R:S ->
-         Msg = io_lib:format("apply sync fun ~p(~p)  error ~p", [Fun, Modules, {C, R, S}]),
-         esUtils:logErrors(Msg)
+         esUtils:logErrors("apply sync fun ~p(~p)  error ~p", [Fun, Modules, {C, R, S}])
    end.
 
 reloadChangedMod([], _SwSyncNode, OnSyncFun, Acc) ->
    fireOnSync(OnSyncFun, Acc);
 reloadChangedMod([Module | LeftMod], SwSyncNode, OnSyncFun, Acc) ->
-   case code:get_object_code(Module) of
+   case Module == es_gen_ipc orelse code:get_object_code(Module) of
+      true ->
+         ignore;
       error ->
-         Msg = io_lib:format("Error loading object code for ~p", [Module]),
-         esUtils:logErrors(Msg),
+         esUtils:logErrors("Error loading object code for ~p", [Module]),
          reloadChangedMod(LeftMod, SwSyncNode, OnSyncFun, Acc);
       {Module, Binary, Filename} ->
          case code:load_binary(Module, Filename, Binary) of
             {module, Module} ->
-               Msg = io_lib:format("Reloaded(Beam changed) Mod: ~s Success", [Module]),
-               esUtils:logSuccess(Msg);
+               esUtils:logSuccess("Reloaded(Beam changed) Mod: ~s Success", [Module]),
+               syncLoadModOnAllNodes(SwSyncNode, Module, Binary, changed);
             {error, What} ->
-               Msg = io_lib:format("Reloaded(Beam changed) Mod: ~s Errors Reason:~p", [Module, What]),
-               esUtils:logErrors(Msg)
-         end,
-         case SwSyncNode of
-            true ->
-               {ok, NumNodes, Nodes} = syncLoadModOnAllNodes(Module),
-               MsgNodes = io_lib:format("Reloaded(Beam changed) Mod: ~s on ~p nodes:~p", [Module, NumNodes, Nodes]),
-               esUtils:logSuccess(MsgNodes);
-            false ->
-               ignore
+               esUtils:logErrors("Reloaded(Beam changed) Mod: ~s Errors Reason:~p", [Module, What])
          end,
          reloadChangedMod(LeftMod, SwSyncNode, OnSyncFun, [Module | Acc])
    end.
@@ -648,15 +654,15 @@ reloadChangedMod([Module | LeftMod], SwSyncNode, OnSyncFun, Acc) ->
 getNodes() ->
    lists:usort(lists:flatten(nodes() ++ [rpc:call(X, erlang, nodes, []) || X <- nodes()])) -- [node()].
 
-syncLoadModOnAllNodes(Module) ->
+syncLoadModOnAllNodes(false, _Module, _Binary, _Reason) ->
+   ignore;
+syncLoadModOnAllNodes(true, Module, Binary, Reason) ->
    %% Get a list of nodes known by this node, plus all attached nodes.
    Nodes = getNodes(),
    NumNodes = length(Nodes),
-   {Module, Binary, _} = code:get_object_code(Module),
-   FSync =
-      fun(Node) ->
-         MsgNode = io_lib:format("Reloading '~s' on ~p", [Module, Node]),
-         esUtils:logSuccess(MsgNode),
+   [
+      begin
+         esUtils:logSuccess("Do Reloading '~s' on ~p", [Module, Node]),
          rpc:call(Node, code, ensure_loaded, [Module]),
          case rpc:call(Node, code, which, [Module]) of
             Filename when is_binary(Filename) orelse is_list(Filename) ->
@@ -666,26 +672,22 @@ syncLoadModOnAllNodes(Module) ->
 
                case rpc:call(Node, code, load_file, [Module]) of
                   {module, Module} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Success on node:~p", [Module, Node]),
-                     esUtils:logSuccess(Msg);
+                     esUtils:logSuccess("Reloaded(Beam ~p) Mod:~s and write Success on node:~p", [Reason, Module, Node]);
                   {error, What} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s and write Errors on node:~p Reason:~p", [Module, Node, What]),
-                     esUtils:logErrors(Msg)
+                     esUtils:logErrors("Reloaded(Beam ~p) Mod:~s and write Errors on node:~p Reason:~p", [Module, Node, What])
                end;
             _ ->
                %% File doesn't exist, just load into VM.
                case rpc:call(Node, code, load_binary, [Module, undefined, Binary]) of
                   {module, Module} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success on node:~p", [Module, Node]),
-                     esUtils:logSuccess(Msg);
+                     esUtils:logSuccess("Reloaded(Beam ~p) Mod:~s Success on node:~p", [Reason, Module, Node]);
                   {error, What} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors on node:~p Reason:~p", [Module, Node, What]),
-                     esUtils:logErrors(Msg)
+                     esUtils:logErrors("Reloaded(Beam ~p) Mod:~s Errors on node:~p Reason:~p", [Reason, Module, Node, What])
                end
          end
-      end,
-   [FSync(X) || X <- Nodes],
-   {ok, NumNodes, Nodes}.
+      end || Node <- Nodes
+   ],
+   esUtils:logSuccess("Reloaded(Beam changed) Mod: ~s on ~p nodes:~p", [Module, NumNodes, Nodes]).
 
 recompileChangeSrcFile(Iterator, SwSyncNode) ->
    case maps:next(Iterator) of
@@ -741,7 +743,7 @@ getObjectCode(Module) ->
       _ -> {undefined, undefined}
    end.
 
-reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
+reloadIfNecessary(Module, OldBinary, Binary, Filename, SwSyncNode) ->
    case Binary =/= OldBinary of
       true ->
          %% Try to load the module...
@@ -749,20 +751,18 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
             {module, Module} ->
                case code:load_binary(Module, Filename, Binary) of
                   {module, Module} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
-                     esUtils:logSuccess(Msg);
+                     esUtils:logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
+                     syncLoadModOnAllNodes(SwSyncNode, Module, Binary, recompiled);
                   {error, What} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
-                     esUtils:logErrors(Msg)
+                     esUtils:logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
                end;
             {error, nofile} ->
                case code:load_binary(Module, Filename, Binary) of
                   {module, Module} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
-                     esUtils:logSuccess(Msg);
+                     esUtils:logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
+                     syncLoadModOnAllNodes(SwSyncNode, Module, Binary, recompiled);
                   {error, What} ->
-                     Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
-                     esUtils:logErrors(Msg)
+                     esUtils:logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
                end;
             {error, embedded} ->
                case code:load_file(Module) of                  %% Module is not yet loaded, load it.
@@ -770,11 +770,10 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename) ->
                   {error, nofile} ->
                      case code:load_binary(Module, Filename, Binary) of
                         {module, Module} ->
-                           Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Success", [Module]),
-                           esUtils:logSuccess(Msg);
+                           esUtils:logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
+                           syncLoadModOnAllNodes(SwSyncNode, Module, Binary, recompiled);
                         {error, What} ->
-                           Msg = io_lib:format("Reloaded(Beam changed) Mod:~s Errors Reason:~p", [Module, What]),
-                           esUtils:logErrors(Msg)
+                           esUtils:logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
                      end
                end
          end;
@@ -794,21 +793,23 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
    CurSrcDir = filename:dirname(SrcFile),
    {CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
    {OldBinary, Filename} = getObjectCode(Module),
-   case getOptions(RootSrcDir) of
+   case Module == es_gen_ipc orelse getOptions(RootSrcDir) of
+      true ->
+         ignore;
       {ok, Options} ->
          RightFileDir = binary_to_list(filename:join(CurSrcDir, filename:basename(SrcFile))),
          case CompileFun(RightFileDir, [binary, return | Options]) of
             {ok, Module, Binary, Warnings} ->
                printResults(Module, RightFileDir, [], Warnings),
-               reloadIfNecessary(Module, OldBinary, Binary, Filename),
+               reloadIfNecessary(Module, OldBinary, Binary, Filename, SwSyncNode),
                {ok, [], Warnings};
             {ok, [{ok, Module, Binary, Warnings}], Warnings2} ->
                printResults(Module, RightFileDir, [], Warnings ++ Warnings2),
-               reloadIfNecessary(Module, OldBinary, Binary, Filename),
+               reloadIfNecessary(Module, OldBinary, Binary, Filename, SwSyncNode),
                {ok, [], Warnings ++ Warnings2};
             {ok, multiple, Results, Warnings} ->
                printResults(Module, RightFileDir, [], Warnings),
-               [reloadIfNecessary(CompiledModule, OldBinary, Binary, Filename) || {CompiledModule, Binary} <- Results],
+               [reloadIfNecessary(CompiledModule, OldBinary, Binary, Filename, SwSyncNode) || {CompiledModule, Binary} <- Results],
                {ok, [], Warnings};
             {ok, OtherModule, _Binary, Warnings} ->
                Desc = io_lib:format("Module definition (~p) differs from expected (~s)", [OtherModule, filename:rootname(filename:basename(RightFileDir))]),
@@ -819,8 +820,7 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
                printResults(Module, RightFileDir, Errors, Warnings),
                {ok, Errors, Warnings};
             _Err ->
-               Msg = io_lib:format("compile Mod:~s Errors Reason:~p", [Module, _Err]),
-               esUtils:logErrors(Msg)
+               esUtils:logErrors("compile Mod:~s Errors Reason:~p", [Module, _Err])
          end;
       undefined ->
          case esUtils:tryGetModOptions(Module) of
@@ -833,8 +833,7 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
                      setOptions(RootSrcDir, Options),
                      recompileSrcFile(SrcFile, SwSyncNode);
                   _ ->
-                     Msg = io_lib:format("Unable to determine options for ~s", [SrcFile]),
-                     esUtils:logErrors(Msg)
+                     esUtils:logErrors("Unable to determine options for ~s", [SrcFile])
                end
          end
    end.

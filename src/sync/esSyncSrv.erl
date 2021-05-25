@@ -1,7 +1,24 @@
 -module(esSyncSrv).
 -behaviour(es_gen_ipc).
 
--include("eSync.hrl").
+%%%%%%%%%%%%%%%%%%%%%%%% eSync.hrl start %%%%%%%%%%%%%%%%%%%%%%
+-define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
+
+-define(Log, log).
+-define(compileCmd, compileCmd).
+-define(extraDirs, extraDirs).
+-define(descendant, descendant).
+-define(onMSyncFun, onMSyncFun).
+-define(onCSyncFun, onCSyncFun).
+-define(swSyncNode, swSyncNode).
+
+-define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}]).
+
+-define(esCfgSync, esCfgSync).
+-define(rootSrcDir, <<"src">>).
+
+%%%%%%%%%%%%%%%%%%%%%%%% eSync.hrl end %%%%%%%%%%%%%%%%%%%%%%
+
 
 -compile(inline).
 -compile({inline_size, 128}).
@@ -120,8 +137,8 @@ handleCall(miGetOnCSync, _, #state{onCSyncFun = OnCSyncFun} = State, _From) ->
    {reply, OnCSyncFun, State};
 handleCall({miSetOnCSync, Fun}, _, State, _From) ->
    {reply, ok, State#state{onCSyncFun = Fun}};
-handleCall(miCurInfo, _, State, _Form) ->
-   {reply, {erlang:get(), State}, State};
+handleCall(miCurInfo, Status, State, _Form) ->
+   {reply, {Status, erlang:get(), State}, State};
 handleCall(_Request, _, _State, _From) ->
    kpS_S.
 
@@ -161,14 +178,11 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
                   true ->
                      RetStr = os:cmd(CmdStr),
                      RetList = string:split(RetStr, "\n", all),
-                     CmdMsg = io_lib:format("compile cmd:~p ~n", [CmdStr]),
-                     esUtils:logSuccess(CmdMsg),
-                     RetMsg = io_lib:format("the result: ~n ", []),
-                     esUtils:logSuccess(RetMsg),
+                     esUtils:logSuccess("compile cmd:~p ~n", [CmdStr]),
+                     esUtils:logSuccess("the result: ~n ", []),
                      [
                         begin
-                           OneMsg = io_lib:format("~p ~n", [OneRet]),
-                           esUtils:logSuccess(OneMsg)
+                           esUtils:logSuccess("~p ~n", [OneRet])
                         end || OneRet <- RetList, OneRet =/= []
                      ],
                      ok;
@@ -192,31 +206,25 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
                {BSrcs, BHrls, BConfigs, BBeams} = esUtils:collSrcFiles(true),
                {nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}};
             _ ->
-               ErrMsg = io_lib:format("error, esSyncSrv receive unexpect port msg ~p~n", [Data]),
-               esUtils:logErrors(ErrMsg),
+               esUtils:logErrors("error, esSyncSrv receive unexpect port msg ~p~n", [Data]),
                kpS_S
          end
    end;
 handleInfo({_Port, closed}, running, _State) ->
-   Msg = io_lib:format("esSyncSrv receive port closed ~n", []),
-   esUtils:logErrors(Msg),
-   kpS_S;
+   esUtils:logErrors("esSyncSrv receive port closed ~n"),
+   {nextS, port_close, _State};
 handleInfo({'EXIT', _Port, Reason}, running, _State) ->
-   Msg = io_lib:format("esSyncSrv receive port exit Reason:~p ~n", [Reason]),
-   esUtils:logErrors(Msg),
-   kpS_S;
+   esUtils:logErrors("esSyncSrv receive port exit Reason:~p ~n", [Reason]),
+   {nextS, {port_EXIT, Reason}, _State};
 handleInfo({_Port, {exit_status, Status}}, running, _State) ->
-   Msg = io_lib:format("esSyncSrv receive port exit_status Status:~p ~n", [Status]),
-   esUtils:logErrors(Msg),
-   kpS_S;
+   esUtils:logErrors("esSyncSrv receive port exit_status Status:~p ~n", [Status]),
+   {nextS, {port_exit_status, Status}, _State};
 handleInfo(_Msg, _, _State) ->
-   Msg = io_lib:format("esSyncSrv receive unexpect msg:~p ~n", [_Msg]),
-   esUtils:logErrors(Msg),
+   esUtils:logErrors("esSyncSrv receive unexpect msg:~p ~n", [_Msg]),
    kpS_S.
 
 handleOnevent(sTimeout, waitConnOver, Status, State) ->
-   Msg = io_lib:format("failed to connect the fileSync to stop stauts:~p state:~p ~n", [Status, State]),
-   esUtils:logErrors(Msg),
+   esUtils:logErrors("failed to connect the fileSync to stop stauts:~p state:~p ~n", [Status, State]),
    stop;
 handleOnevent(_EventType, _EventContent, _Status, _State) ->
    kpS_S.

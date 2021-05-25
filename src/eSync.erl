@@ -29,8 +29,7 @@ run() ->
          esSyncSrv:unpause(),
          ok;
       {error, Reason} ->
-         Msg = io_lib:format("start eSync error:~p~n", [Reason]),
-         esUtils:logErrors(Msg)
+         esUtils:logErrors("start eSync error:~p~n", [Reason])
    end.
 
 pause() ->

@@ -210,15 +210,17 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
                kpS_S
          end
    end;
-handleInfo({_Port, closed}, running, _State) ->
+handleInfo({Port, closed}, running, #state{port = Port} = _State) ->
    esUtils:logErrors("esSyncSrv receive port closed ~n"),
    {nextS, port_close, _State};
-handleInfo({'EXIT', _Port, Reason}, running, _State) ->
+handleInfo({'EXIT', Port, Reason}, running, #state{port = Port} = _State) ->
    esUtils:logErrors("esSyncSrv receive port exit Reason:~p ~n", [Reason]),
    {nextS, {port_EXIT, Reason}, _State};
-handleInfo({_Port, {exit_status, Status}}, running, _State) ->
-   esUtils:logErrors("esSyncSrv receive port exit_status Status:~p ~n", [Status]),
+handleInfo({Port, {exit_status, Status}}, running, #state{port = Port} = _State) ->
+   esUtils:logErrors("esSyncSrv receive port exit_status Status:~p ~p ~n", [Status, Port]),
    {nextS, {port_exit_status, Status}, _State};
+handleInfo({'EXIT', _Pid, _Reason}, running, _State) ->
+   kpS_S;
 handleInfo(_Msg, _, _State) ->
    esUtils:logErrors("esSyncSrv receive unexpect msg:~p ~n", [_Msg]),
    kpS_S.

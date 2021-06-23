@@ -7,7 +7,7 @@
 
 ## 改造自 [sync](https://github.com/rustyio/sync)
 
-## 封装的监听文件项目[fileSync](https://github.com/SisMaker/fileSync) 如果要自己构建执行文件, 拉取监听文件项目, 然后 go build 复制执行文件到该工程的 priv 目录即可
+## 封装的监听文件项目[fileSync](https://github.com/ErlGameWorld/fileSync) 如果要自己构建执行文件, 拉取监听文件项目, 然后 go build 复制执行文件到该工程的 priv 目录即可
 
 # 特点
 

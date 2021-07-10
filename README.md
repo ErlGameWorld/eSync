@@ -29,7 +29,8 @@
     设置编译与加载日志提示
         eSync:setLog(Val).
     设置加载后的钩子函数(支持匿名函数， {Mod, Fun}(Fun函数只有一个参数)格式， 以及他们的列表组合）
-        eSync:setOnsync(FunOrFuns).   
+        eSync:setOnMSync(FunOrFuns).   
+        eSync:setOnCSync(FunOrFuns). 
 
 # 配置说明
 
@@ -44,7 +45,8 @@
                 {descendant, fix},
                 {onMSyncFun, undefined},
                 {onCSyncFun, undefined},
-                {swSyncNode, false}
+                {swSyncNode, false},
+                {isJustMem, false}
             ]      
         } 
     ]

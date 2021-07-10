@@ -10,8 +10,9 @@
 -define(onMSyncFun, onMSyncFun).
 -define(onCSyncFun, onCSyncFun).
 -define(swSyncNode, swSyncNode).
+-define(isJustMem, isJustMem).
 
--define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}]).
+-define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}]).
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).
@@ -481,19 +482,19 @@ setEnv(Var, Val) ->
    ok = application:set_env(eSync, Var, Val).
 
 logSuccess(Format) ->
-   canLog(success) andalso logger:notice(Format).
+   canLog(success) andalso error_logger:info_msg(Format).
 logSuccess(Format, Args) ->
-   canLog(success) andalso logger:notice(Format, Args).
+   canLog(success) andalso error_logger:info_msg(Format, Args).
 
 logErrors(Format) ->
-   canLog(errors) andalso logger:error(Format).
+   canLog(errors) andalso error_logger:error_msg(Format).
 logErrors(Format, Args) ->
-   canLog(errors) andalso logger:error(Format, Args).
+   canLog(errors) andalso error_logger:error_msg(Format, Args).
 
 logWarnings(Format) ->
-   canLog(warnings) andalso logger:warning(Format) .
+   canLog(warnings) andalso error_logger:warning_msg(Format) .
 logWarnings(Format, Args) ->
-   canLog(warnings) andalso logger:warning(Format, Args) .
+   canLog(warnings) andalso error_logger:warning_msg(Format, Args) .
 
 canLog(MsgType) ->
    case esSyncSrv:getLog() of
@@ -798,7 +799,8 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
          ignore;
       {ok, Options} ->
          RightFileDir = binary_to_list(filename:join(CurSrcDir, filename:basename(SrcFile))),
-         case CompileFun(RightFileDir, [binary, return | Options]) of
+         LastOptions = ?IIF(?esCfgSync:getv(?isJustMem), [binary, return | Options], [return | Options]),
+         case CompileFun(RightFileDir, LastOptions) of
             {ok, Module, Binary, Warnings} ->
                printResults(Module, RightFileDir, [], Warnings),
                reloadIfNecessary(Module, OldBinary, Binary, Filename, SwSyncNode),
@@ -819,6 +821,9 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
             {error, Errors, Warnings} ->
                printResults(Module, RightFileDir, Errors, Warnings),
                {ok, Errors, Warnings};
+            {ok, Module, Warnings} ->
+               printResults(Module, RightFileDir, [], Warnings),
+               {ok, [], Warnings};
             _Err ->
                esUtils:logErrors("compile Mod:~s Errors Reason:~p", [Module, _Err])
          end;
@@ -857,7 +862,8 @@ collIncludeCErls([Hrl | LeftHrl], SrcFiles, CSrcs, NewAddMap) ->
 
 whoInclude(HrlFile, AllFiles, CFiles, NewAddMap) ->
    HrlFileBaseName = filename:basename(HrlFile),
-   doMathEveryFile(maps:iterator(AllFiles), HrlFileBaseName, CFiles, NewAddMap).
+   QuoteHrlFileBaseName = <<"\"", HrlFileBaseName/binary, "\"">>,
+   doMathEveryFile(maps:iterator(AllFiles), QuoteHrlFileBaseName, CFiles, NewAddMap).
 
 doMathEveryFile(Iterator, HrlFileBaseName, CFiles, NewAddMap) ->
    case maps:next(Iterator) of

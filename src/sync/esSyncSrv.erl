@@ -11,8 +11,9 @@
 -define(onMSyncFun, onMSyncFun).
 -define(onCSyncFun, onCSyncFun).
 -define(swSyncNode, swSyncNode).
+-define(isJustMem, isJustMem).
 
--define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}]).
+-define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}]).
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).
@@ -54,14 +55,14 @@
 -define(None, 0).
 
 -record(state, {
-   srcFiles = #{} :: map()
-   , hrlFiles = #{} :: map()
-   , configs = #{} :: map()
-   , beams = #{} :: map()
+   port = undefined
    , onMSyncFun = undefined
    , onCSyncFun = undefined
    , swSyncNode = false
-   , port = undefined
+   , srcFiles = #{} :: map()
+   , hrlFiles = #{} :: map()
+   , configs = #{} :: map()
+   , beams = #{} :: map()
 }).
 
 %% ************************************  API start ***************************
@@ -204,7 +205,7 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
                esUtils:logSuccess("eSync connect fileSync success..."),
                %% 然后收集一下监听目录下的src文件
                {BSrcs, BHrls, BConfigs, BBeams} = esUtils:collSrcFiles(true),
-               {nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}};
+               {nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}, {isHib, true}};
             _ ->
                esUtils:logErrors("error, esSyncSrv receive unexpect port msg ~p~n", [Data]),
                kpS_S

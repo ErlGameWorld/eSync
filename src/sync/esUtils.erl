@@ -76,7 +76,8 @@ getModOptions(Module) ->
             Options5 = maybeAddCompileInfo(Options4),
             %% add filetype to options (DTL, LFE, erl, etc)
             Options6 = addFileType(Module, Options5),
-            {ok, Options6}
+            Options7 = lists:keyreplace(debug_info_key, 1, Options6, eSync:getDIK()),
+            {ok, Options7}
          catch ExType:Error ->
             logWarnings("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error]),
             undefined
@@ -99,7 +100,8 @@ tryGetModOptions(Module) ->
       Options5 = maybeAddCompileInfo(Options4),
       %% add filetype to options (DTL, LFE, erl, etc)
       Options6 = addFileType(Module, Options5),
-      {ok, Options6}
+      Options7 = lists:keyreplace(debug_info_key, 1, Options6, eSync:getDIK()),
+      {ok, Options7}
    catch _ExType:_Error ->
       undefiend
    end.

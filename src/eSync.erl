@@ -14,7 +14,8 @@
    getOnCSync/0,
    setOnCSync/0,
    setOnCSync/1,
-   swSyncNode/1
+   swSyncNode/1,
+   getDIK/0
 ]).
 
 start() ->
@@ -66,6 +67,10 @@ setOnCSync() ->
 
 setOnCSync(Fun) ->
    esSyncSrv:setOnCSync(Fun).
+   
+getDIK() ->
+	%% if use debug_info_key please return the key in this fun: {debug_info_key, xxx}
+	ok.	
 
 
 

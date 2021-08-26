@@ -11,8 +11,9 @@
 -define(onCSyncFun, onCSyncFun).
 -define(swSyncNode, swSyncNode).
 -define(isJustMem, isJustMem).
+-define(debugInfoKeyFun, debugInfoKeyFun).
 
--define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}]).
+-define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}, {?debugInfoKeyFun, undefined}]).
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).
@@ -76,7 +77,7 @@ getModOptions(Module) ->
             Options5 = maybeAddCompileInfo(Options4),
             %% add filetype to options (DTL, LFE, erl, etc)
             Options6 = addFileType(Module, Options5),
-            Options7 = lists:keyreplace(debug_info_key, 1, Options6, eSync:getDIK()),
+            Options7 = lists:keyreplace(debug_info_key, 1, Options6, debugInfoKeyFun()),
             {ok, Options7}
          catch ExType:Error ->
             logWarnings("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error]),
@@ -100,7 +101,7 @@ tryGetModOptions(Module) ->
       Options5 = maybeAddCompileInfo(Options4),
       %% add filetype to options (DTL, LFE, erl, etc)
       Options6 = addFileType(Module, Options5),
-      Options7 = lists:keyreplace(debug_info_key, 1, Options6, eSync:getDIK()),
+      Options7 = lists:keyreplace(debug_info_key, 1, Options6, debugInfoKeyFun()),
       {ok, Options7}
    catch _ExType:_Error ->
       undefiend
@@ -1012,4 +1013,12 @@ dateTimeToSec(DateTime) ->
          0;
       true ->
          erlang:universaltime_to_posixtime(DateTime)
+   end.
+
+debugInfoKeyFun() ->
+   case ?esCfgSync:getv(?debugInfoKeyFun) of
+      undefined ->
+         {debug_info_key, undefined};
+      {Mod, Fun} ->
+         Mod:Fun()
    end.

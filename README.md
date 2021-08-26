@@ -46,7 +46,8 @@
                 {onMSyncFun, undefined},
                 {onCSyncFun, undefined},
                 {swSyncNode, false},
-                {isJustMem, false}
+                {isJustMem, false},
+                {debugInfoKeyFun, undefined}
             ]      
         } 
     ]

@@ -12,8 +12,9 @@
 -define(onCSyncFun, onCSyncFun).
 -define(swSyncNode, swSyncNode).
 -define(isJustMem, isJustMem).
+-define(debugInfoKeyFun, debugInfoKeyFun).
 
--define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}]).
+-define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}, {?debugInfoKeyFun, undefined}]).
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).

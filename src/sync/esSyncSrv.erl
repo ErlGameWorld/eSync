@@ -197,11 +197,12 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
          case Data of
             <<"init">> ->
                %% port启动成功 先发送监听目录配置
-               {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
-               AddStr = string:join([filename:nativename(OneDir) || OneDir <- AddSrcDirs], "|"),
+               {AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = esUtils:mergeExtraDirs(false),
+               AddExtraStr = string:join([filename:nativename(OneDir) || OneDir <- AddExtraSrcDirs], "|"),
+               AddOnlyStr = string:join([filename:nativename(OneDir) || OneDir <- AddOnlySrcDirs], "|"),
                OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
                DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
-               AllStr = string:join([AddStr, OnlyStr, DelStr], "\r\n"),
+               AllStr = string:join([AddExtraStr, AddOnlyStr, OnlyStr, DelStr], "\r\n"),
                erlang:port_command(Port, AllStr),
                esUtils:logSuccess("eSync connect fileSync success..."),
                %% 然后收集一下监听目录下的src文件

@@ -740,7 +740,7 @@ rec_nodes(Tag, [N | Tail], Name, BadNodes, Replies, Time, TimerId) ->
          monitor_node(N, false),
          rec_nodes_rest(Tag, Tail, Name, [N | BadNodes], Replies)
    after Time ->
-      case rpc:call(N, erlang, whereis, [Name]) of
+      case erpc:call(N, erlang, whereis, [Name]) of
          Pid when is_pid(Pid) ->
             rec_nodes(Tag, [N | Tail], Name, BadNodes,
                Replies, infinity, TimerId);

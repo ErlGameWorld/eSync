@@ -328,12 +328,12 @@ getSrcDir(Dir, Ctr) ->
 mergeExtraDirs(IsAddPath) ->
    case ?esCfgSync:getv(?extraDirs) of
       undefined ->
-         {[], [], []};
+         {[], [], [], []};
       ExtraList ->
          FunMerge =
-            fun(OneExtra, {AddDirs, OnlyDirs, DelDirs} = AllAcc) ->
+            fun(OneExtra, {AddExtraDirs, AddOnlyDirs, OnlyDirs, DelDirs} = AllAcc) ->
                case OneExtra of
-                  {add, DirsAndOpts} ->
+                  {addExtra, DirsAndOpts} ->
                      Adds =
                         [
                            begin
@@ -352,7 +352,27 @@ mergeExtraDirs(IsAddPath) ->
                               filename:absname(Dir)
                            end || {Dir, Opts} <- DirsAndOpts
                         ],
-                     setelement(1, AllAcc, Adds ++ AddDirs);
+                     setelement(1, AllAcc, Adds ++ AddExtraDirs);
+                  {addOnly, DirsAndOpts} ->
+                     Adds =
+                        [
+                           begin
+                              case IsAddPath of
+                                 true ->
+                                    case proplists:get_value(outdir, Opts) of
+                                       undefined ->
+                                          true;
+                                       Path ->
+                                          ok = filelib:ensure_dir(Path),
+                                          true = code:add_pathz(Path)
+                                    end;
+                                 _ ->
+                                    ignore
+                              end,
+                              filename:absname(Dir)
+                           end || {Dir, Opts} <- DirsAndOpts
+                        ],
+                     setelement(2, AllAcc, Adds ++ AddOnlyDirs);
                   {only, DirsAndOpts} ->
                      Onlys =
                         [
@@ -372,7 +392,7 @@ mergeExtraDirs(IsAddPath) ->
                               filename:absname(Dir)
                            end || {Dir, Opts} <- DirsAndOpts
                         ],
-                     setelement(2, AllAcc, Onlys ++ OnlyDirs);
+                     setelement(3, AllAcc, Onlys ++ OnlyDirs);
                   {del, DirsAndOpts} ->
                      Dels =
                         [
@@ -380,16 +400,17 @@ mergeExtraDirs(IsAddPath) ->
                               filename:absname(Dir)
                            end || {Dir, _Opts} <- DirsAndOpts
                         ],
-                     setelement(3, AllAcc, Dels ++ DelDirs)
+                     setelement(4, AllAcc, Dels ++ DelDirs)
                end
             end,
-         lists:foldl(FunMerge, {[], [], []}, ExtraList)
+         lists:foldl(FunMerge, {[], [], [], []}, ExtraList)
    end.
 
 -define(IIF(Cond, Ret1, Ret2), (case Cond of true -> Ret1; _ -> Ret2 end)).
+-define(RegExp, <<".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$">>).
 collSrcFiles(IsAddPath) ->
-   {AddSrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
-   CollFiles = filelib:fold_files(filename:absname(<<"./">>), ".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$", true,
+   {AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
+   CollFiles = filelib:fold_files(filename:absname(<<"./">>), ?RegExp, true,
       fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
          case isOnlyDir(OnlySrcDirs, OneFile) andalso (not isDelDir(DelSrcDirs, OneFile)) of
             true ->
@@ -431,9 +452,9 @@ collSrcFiles(IsAddPath) ->
          end
       end, {#{}, #{}, #{}, #{}}),
 
-   FunCollAdds =
+   FunCollAddExtra =
       fun(OneDir, FilesAcc) ->
-         filelib:fold_files(?IIF(is_list(OneDir), list_to_binary(OneDir), OneDir), ".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$", true,
+         filelib:fold_files(?IIF(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, true,
             fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
                MTimeSec = esUtils:dateTimeToSec(filelib:last_modified(OneFile)),
                case filename:extension(OneFile) of
@@ -451,7 +472,30 @@ collSrcFiles(IsAddPath) ->
                end
             end, FilesAcc)
       end,
-   lists:foldl(FunCollAdds, CollFiles, AddSrcDirs).
+   AddExtraCollFiles = lists:foldl(FunCollAddExtra, CollFiles, AddExtraSrcDirs),
+
+   FunCollAddOnly =
+      fun(OneDir, FilesAcc) ->
+         filelib:fold_files(?IIF(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, false,
+            fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
+               MTimeSec = esUtils:dateTimeToSec(filelib:last_modified(OneFile)),
+               case filename:extension(OneFile) of
+                  <<".beam">> ->
+                     BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+                     setelement(4, Acc, Beams#{BeamMod => MTimeSec});
+                  <<".config">> ->
+                     setelement(3, Acc, Configs#{OneFile => MTimeSec});
+                  <<".hrl">> ->
+                     setelement(2, Acc, Hrls#{OneFile => MTimeSec});
+                  <<>> ->
+                     Acc;
+                  _ ->
+                     setelement(1, Acc, Srcs#{OneFile => MTimeSec})
+               end
+            end, FilesAcc)
+      end,
+   lists:foldl(FunCollAddOnly, AddExtraCollFiles, AddOnlySrcDirs).
+
 
 isOnlyDir([], _) ->
    true;
@@ -656,7 +700,7 @@ reloadChangedMod([Module | LeftMod], SwSyncNode, OnSyncFun, Acc) ->
    end.
 
 getNodes() ->
-   lists:usort(lists:flatten(nodes() ++ [rpc:call(X, erlang, nodes, []) || X <- nodes()])) -- [node()].
+   lists:usort(lists:flatten(nodes() ++ [erpc:call(X, erlang, nodes, []) || X <- nodes()])) -- [node()].
 
 syncLoadModOnAllNodes(false, _Module, _Binary, _Reason) ->
    ignore;
@@ -667,14 +711,14 @@ syncLoadModOnAllNodes(true, Module, Binary, Reason) ->
    [
       begin
          esUtils:logSuccess("Do Reloading '~s' on ~p", [Module, Node]),
-         rpc:call(Node, code, ensure_loaded, [Module]),
-         case rpc:call(Node, code, which, [Module]) of
+         erpc:call(Node, code, ensure_loaded, [Module]),
+         case erpc:call(Node, code, which, [Module]) of
             Filename when is_binary(Filename) orelse is_list(Filename) ->
                %% File exists, overwrite and load into VM.
-               ok = rpc:call(Node, file, write_file, [Filename, Binary]),
-               rpc:call(Node, code, purge, [Module]),
+               ok = erpc:call(Node, file, write_file, [Filename, Binary]),
+               erpc:call(Node, code, purge, [Module]),
 
-               case rpc:call(Node, code, load_file, [Module]) of
+               case erpc:call(Node, code, load_file, [Module]) of
                   {module, Module} ->
                      esUtils:logSuccess("Reloaded(Beam ~p) Mod:~s and write Success on node:~p", [Reason, Module, Node]);
                   {error, What} ->
@@ -682,7 +726,7 @@ syncLoadModOnAllNodes(true, Module, Binary, Reason) ->
                end;
             _ ->
                %% File doesn't exist, just load into VM.
-               case rpc:call(Node, code, load_binary, [Module, undefined, Binary]) of
+               case erpc:call(Node, code, load_binary, [Module, undefined, Binary]) of
                   {module, Module} ->
                      esUtils:logSuccess("Reloaded(Beam ~p) Mod:~s Success on node:~p", [Reason, Module, Node]);
                   {error, What} ->

@@ -2,10 +2,10 @@
    [{description, "erlang code auto compile and loader"},
       {vsn, "0.1.0"},
       {registered, []},
-      {mod, {eSync_app, []}},
+      {mod, {eSync, []}},
       {applications, [kernel, stdlib, syntax_tools, compiler]},
       {env, []},
       {modules, []},
-      {licenses, ["MIT License"]},
+      {licenses, ["MIT"]},
       {links, []}
    ]}.

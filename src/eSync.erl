@@ -22,6 +22,15 @@
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).
 
+-define(logSuccess(Format), canLog(success) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE])).
+-define(logSuccess(Format, Args), canLog(success) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE] ++ Args)).
+
+-define(logErrors(Format), canLog(errors) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE])).
+-define(logErrors(Format, Args), canLog(errors) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE] ++ Args)).
+
+-define(logWarnings(Format), canLog(warnings) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE])).
+-define(logWarnings(Format, Args), canLog(warnings) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE] ++ Args)).
+
 -export([
    start/2,
    start/0,
@@ -71,7 +80,7 @@ run() ->
          unpause(),
          ok;
       {error, Reason} ->
-         logErrors("start eSync error:~p~n", [Reason])
+         ?logErrors("start eSync error:~p~n", [Reason])
    end.
 
 -define(SERVER, ?MODULE).
@@ -91,7 +100,7 @@ run() ->
 %% ************************************  API start ***************************
 rescan() ->
    es_gen_ipc:cast(?SERVER, miRescan),
-   logSuccess("start rescaning source files..."),
+   ?logSuccess("start rescaning source files..."),
    ok.
 
 unpause() ->
@@ -100,7 +109,7 @@ unpause() ->
 
 pause() ->
    es_gen_ipc:cast(?SERVER, miPause),
-   logSuccess("Pausing eSync. Call eSync:run() to restart"),
+   ?logSuccess("Pausing eSync. Call eSync:run() to restart"),
    ok.
 
 curInfo() ->
@@ -109,12 +118,12 @@ curInfo() ->
 setLog(T) when ?LOG_ON(T) ->
    setEnv(log, T),
    loadCfg(),
-   logSuccess("Console Notifications Enabled"),
+   ?logSuccess("Console Notifications Enabled"),
    ok;
 setLog(_) ->
    setEnv(log, none),
    loadCfg(),
-   logSuccess("Console Notifications Disabled"),
+   ?logSuccess("Console Notifications Disabled"),
    ok.
 
 getLog() ->
@@ -202,11 +211,11 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
                   true ->
                      RetStr = os:cmd(CmdStr),
                      RetList = string:split(RetStr, "\n", all),
-                     logSuccess("compile cmd:~p ~n", [CmdStr]),
-                     logSuccess("the result: ~n ", []),
+                     ?logSuccess("compile cmd:~p ~n", [CmdStr]),
+                     ?logSuccess("the result: ~n ", []),
                      [
                         begin
-                           logSuccess("~p ~n", [OneRet])
+                           ?logSuccess("~p ~n", [OneRet])
                         end || OneRet <- RetList, OneRet =/= []
                      ],
                      ok;
@@ -226,32 +235,32 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
                DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
                AllStr = string:join([AddExtraStr, AddOnlyStr, OnlyStr, DelStr], "\r\n"),
                erlang:port_command(Port, AllStr),
-               logSuccess("eSync connect fileSync success..."),
+               ?logSuccess("eSync connect fileSync success..."),
                %% 然后收集一下监听目录下的src文件
                {BSrcs, BHrls, BConfigs, BBeams} = collSrcFiles(true),
                {nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}, {isHib, true}};
             _ ->
-               logErrors("error, eSync receive unexpect port msg ~p~n", [Data]),
+               ?logErrors("error, receive unexpect port msg ~p~n", [Data]),
                kpS_S
          end
    end;
 handleInfo({Port, closed}, running, #state{port = Port} = _State) ->
-   logErrors("eSync receive port closed ~n"),
+   ?logErrors("receive port closed ~n"),
    {nextS, port_close, _State};
 handleInfo({'EXIT', Port, Reason}, running, #state{port = Port} = _State) ->
-   logErrors("eSync receive port exit Reason:~p ~n", [Reason]),
+   ?logErrors("receive port exit Reason:~p ~n", [Reason]),
    {nextS, {port_EXIT, Reason}, _State};
 handleInfo({Port, {exit_status, Status}}, running, #state{port = Port} = _State) ->
-   logErrors("eSync receive port exit_status Status:~p ~p ~n", [Status, Port]),
+   ?logErrors("receive port exit_status Status:~p ~p ~n", [Status, Port]),
    {nextS, {port_exit_status, Status}, _State};
 handleInfo({'EXIT', _Pid, _Reason}, running, _State) ->
    kpS_S;
 handleInfo(_Msg, _, _State) ->
-   logErrors("eSync receive unexpect msg:~p ~n", [_Msg]),
+   ?logErrors("receive unexpect msg:~p ~n", [_Msg]),
    kpS_S.
 
 handleOnevent(sTimeout, waitConnOver, Status, State) ->
-   logErrors("failed to connect the fileSync to stop stauts:~p state:~p ~n", [Status, State]),
+   ?logErrors("failed to connect the fileSync to stop stauts:~p state:~p ~n", [Status, State]),
    stop;
 handleOnevent(_EventType, _EventContent, _Status, _State) ->
    kpS_S.
@@ -316,7 +325,7 @@ getModOpts(Module) ->
             Options7 = lists:keyreplace(debug_info_key, 1, Options6, debugInfoKeyFun()),
             {ok, Options7}
          catch ExType:Error ->
-            logWarnings("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error]),
+            ?logWarnings("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error]),
             undefined
          end;
       _ ->
@@ -370,7 +379,7 @@ tryGetSrcOpts(SrcDir) ->
                   {ok, _Options} = Opts ->
                      Opts;
                   _ExType:_Error ->
-                     logWarnings("looking src options error ~p:~p. ~n", [_ExType, _Error]),
+                     ?logWarnings("looking src options error ~p:~p. ~n", [_ExType, _Error]),
                      undefined
                end;
             _ ->
@@ -763,19 +772,6 @@ getEnv(Var, Default) ->
 setEnv(Var, Val) ->
    ok = application:set_env(eSync, Var, Val).
 
-logSuccess(Format) ->
-   canLog(success) andalso error_logger:info_msg(Format).
-logSuccess(Format, Args) ->
-   canLog(success) andalso error_logger:info_msg(Format, Args).
-
-logErrors(Format) ->
-   canLog(errors) andalso error_logger:error_msg(Format).
-logErrors(Format, Args) ->
-   canLog(errors) andalso error_logger:error_msg(Format, Args).
-
-logWarnings(Format, Args) ->
-   canLog(warnings) andalso error_logger:warning_msg(Format, Args).
-
 canLog(MsgType) ->
    case eSync:getLog() of
       true -> true;
@@ -858,12 +854,11 @@ loadCfg() ->
 
 %% *******************************  加载与编译相关 **********************************************************************
 printResults(_Module, SrcFile, [], []) ->
-   logSuccess("~s Recompiled", [SrcFile]);
+   ?logSuccess("~s Recompiled", [SrcFile]);
 printResults(_Module, SrcFile, [], Warnings) ->
-   formatErrors(fun logWarnings/2, SrcFile, [], Warnings);
+   formatErrors(logWarnings, SrcFile, [], Warnings);
 printResults(_Module, SrcFile, Errors, Warnings) ->
-   formatErrors(fun logErrors/2, SrcFile, Errors, Warnings).
-
+   formatErrors(logErrors, SrcFile, Errors, Warnings).
 
 %% @private Print error messages in a pretty and user readable way.
 formatErrors(LogFun, File, Errors, Warnings) ->
@@ -875,7 +870,12 @@ formatErrors(LogFun, File, Errors, Warnings) ->
    FPck =
       fun({Line, Prefix, Module, ErrorDescription}) ->
          Msg = formatError(Module, ErrorDescription),
-         LogFun("~s: ~p: ~s: ~s", [File, Line, Prefix, Msg])
+         case LogFun of
+            logWarnings ->
+               ?logWarnings("~s: ~p: ~s: ~s", [File, Line, Prefix, Msg]);
+            logErrors ->
+               ?logErrors("~s: ~p: ~s: ~s", [File, Line, Prefix, Msg])
+         end
       end,
    [FPck(X) || X <- Everything],
    ok.
@@ -900,13 +900,13 @@ onSyncApply({M, F}, Modules) ->
    try erlang:apply(M, F, [Modules])
    catch
       C:R:S ->
-         logErrors("apply sync fun ~p:~p(~p)  error ~p", [M, F, Modules, {C, R, S}])
+         ?logErrors("apply sync fun ~p:~p(~p)  error ~p", [M, F, Modules, {C, R, S}])
    end;
 onSyncApply(Fun, Modules) when is_function(Fun) ->
    try Fun(Modules)
    catch
       C:R:S ->
-         logErrors("apply sync fun ~p(~p)  error ~p", [Fun, Modules, {C, R, S}])
+         ?logErrors("apply sync fun ~p(~p)  error ~p", [Fun, Modules, {C, R, S}])
    end.
 
 reloadChangedMod([], _SwSyncNode, OnSyncFun, Acc) ->
@@ -916,15 +916,15 @@ reloadChangedMod([Module | LeftMod], SwSyncNode, OnSyncFun, Acc) ->
       true ->
          ignore;
       error ->
-         logErrors("Error loading object code for ~p", [Module]),
+         ?logErrors("Error loading object code for ~p", [Module]),
          reloadChangedMod(LeftMod, SwSyncNode, OnSyncFun, Acc);
       {Module, Binary, Filename} ->
          case code:load_binary(Module, Filename, Binary) of
             {module, Module} ->
-               logSuccess("Reloaded(Beam changed) Mod: ~s Success", [Module]),
+               ?logSuccess("Reloaded(Beam changed) Mod: ~s Success", [Module]),
                syncLoadModOnAllNodes(SwSyncNode, Module, Binary, changed);
             {error, What} ->
-               logErrors("Reloaded(Beam changed) Mod: ~s Errors Reason:~p", [Module, What])
+               ?logErrors("Reloaded(Beam changed) Mod: ~s Errors Reason:~p", [Module, What])
          end,
          reloadChangedMod(LeftMod, SwSyncNode, OnSyncFun, [Module | Acc])
    end.
@@ -940,7 +940,7 @@ syncLoadModOnAllNodes(true, Module, Binary, Reason) ->
    NumNodes = length(Nodes),
    [
       begin
-         logSuccess("Do Reloading '~s' on ~p", [Module, Node]),
+         ?logSuccess("Do Reloading '~s' on ~p", [Module, Node]),
          erpc:call(Node, code, ensure_loaded, [Module]),
          case erpc:call(Node, code, which, [Module]) of
             Filename when is_binary(Filename) orelse is_list(Filename) ->
@@ -950,22 +950,22 @@ syncLoadModOnAllNodes(true, Module, Binary, Reason) ->
 
                case erpc:call(Node, code, load_file, [Module]) of
                   {module, Module} ->
-                     logSuccess("Reloaded(Beam ~p) Mod:~s and write Success on node:~p", [Reason, Module, Node]);
+                     ?logSuccess("Reloaded(Beam ~p) Mod:~s and write Success on node:~p", [Reason, Module, Node]);
                   {error, What} ->
-                     logErrors("Reloaded(Beam ~p) Mod:~s and write Errors on node:~p Reason:~p", [Module, Node, What])
+                     ?logErrors("Reloaded(Beam ~p) Mod:~s and write Errors on node:~p Reason:~p", [Module, Node, What])
                end;
             _ ->
                %% File doesn't exist, just load into VM.
                case erpc:call(Node, code, load_binary, [Module, undefined, Binary]) of
                   {module, Module} ->
-                     logSuccess("Reloaded(Beam ~p) Mod:~s Success on node:~p", [Reason, Module, Node]);
+                     ?logSuccess("Reloaded(Beam ~p) Mod:~s Success on node:~p", [Reason, Module, Node]);
                   {error, What} ->
-                     logErrors("Reloaded(Beam ~p) Mod:~s Errors on node:~p Reason:~p", [Reason, Module, Node, What])
+                     ?logErrors("Reloaded(Beam ~p) Mod:~s Errors on node:~p Reason:~p", [Reason, Module, Node, What])
                end
          end
       end || Node <- Nodes
    ],
-   logSuccess("Reloaded(Beam changed) Mod: ~s on ~p nodes:~p", [Module, NumNodes, Nodes]).
+   ?logSuccess("Reloaded(Beam changed) Mod: ~s on ~p nodes:~p", [Module, NumNodes, Nodes]).
 
 recompileChangeSrcFile(Iterator, SwSyncNode) ->
    case maps:next(Iterator) of
@@ -1029,18 +1029,18 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename, SwSyncNode) ->
             {module, Module} ->
                case code:load_binary(Module, Filename, Binary) of
                   {module, Module} ->
-                     logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
+                     ?logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
                      syncLoadModOnAllNodes(SwSyncNode, Module, Binary, recompiled);
                   {error, What} ->
-                     logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
+                     ?logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
                end;
             {error, nofile} ->
                case code:load_binary(Module, Filename, Binary) of
                   {module, Module} ->
-                     logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
+                     ?logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
                      syncLoadModOnAllNodes(SwSyncNode, Module, Binary, recompiled);
                   {error, What} ->
-                     logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
+                     ?logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
                end;
             {error, embedded} ->
                case code:load_file(Module) of                  %% Module is not yet loaded, load it.
@@ -1048,10 +1048,10 @@ reloadIfNecessary(Module, OldBinary, Binary, Filename, SwSyncNode) ->
                   {error, nofile} ->
                      case code:load_binary(Module, Filename, Binary) of
                         {module, Module} ->
-                           logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
+                           ?logSuccess("Reloaded(Beam recompiled) Mod:~s Success", [Module]),
                            syncLoadModOnAllNodes(SwSyncNode, Module, Binary, recompiled);
                         {error, What} ->
-                           logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
+                           ?logErrors("Reloaded(Beam recompiled) Mod:~s Errors Reason:~p", [Module, What])
                      end
                end
          end;
@@ -1102,7 +1102,7 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
                printResults(Module, RightFileDir, [], Warnings),
                {ok, [], Warnings};
             _Err ->
-               logErrors("compile Mod:~s Errors Reason:~p", [Module, _Err])
+               ?logErrors("compile Mod:~s Errors Reason:~p", [Module, _Err])
          end;
       undefined ->
          case tryGetModOpts(Module) of
@@ -1115,7 +1115,7 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
                      setOptions(RootSrcDir, Options),
                      recompileSrcFile(SrcFile, SwSyncNode);
                   _ ->
-                     logErrors("Unable to determine options for ~s", [SrcFile])
+                     ?logErrors("Unable to determine options for ~s", [SrcFile])
                end
          end
    end.

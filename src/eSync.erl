@@ -1,5 +1,8 @@
 -module(eSync).
+
 -behaviour(es_gen_ipc).
+
+-include_lib("kernel/include/file.hrl").
 
 -compile(inline).
 -compile({inline_size, 128}).
@@ -8,6 +11,8 @@
 -define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
 
 -define(Log, log).
+-define(baseDir, baseDir).
+-define(monitorExt, monitorExt).
 -define(compileCmd, compileCmd).
 -define(extraDirs, extraDirs).
 -define(descendant, descendant).
@@ -17,7 +22,9 @@
 -define(isJustMem, isJustMem).
 -define(debugInfoKeyFun, debugInfoKeyFun).
 
--define(DefCfgList, [{?Log, all}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}, {?debugInfoKeyFun, undefined}]).
+-define(ExtList, [".hrl", ".erl", ".beam", ".dtl", ".lfe", ".ex", ".config"]).
+
+-define(DefCfgList, [{?Log, all}, {?baseDir, "./"}, {?monitorExt, ?ExtList}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}, {?debugInfoKeyFun, undefined}]).
 
 -define(esCfgSync, esCfgSync).
 -define(rootSrcDir, <<"src">>).
@@ -157,8 +164,18 @@ init(_Args) ->
 
 handleAfter(?None, waiting, State) ->
    %% 启动port 发送监听目录信息
+   {AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(false),
+   AddExtraStr = string:join([filename:nativename(OneDir) || OneDir <- AddExtraSrcDirs], "|"),
+   AddOnlyStr = string:join([filename:nativename(OneDir) || OneDir <- AddOnlySrcDirs], "|"),
+   OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
+   DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
+   AllStr = string:join([AddExtraStr, AddOnlyStr, OnlyStr, DelStr], "\r\n"),
+
+   BaseDirStr = filename:nativename(?esCfgSync:getv(?baseDir)),
+   MonitorExtStr = string:join(?esCfgSync:getv(?monitorExt), "|"),
+
+   Opts = [{packet, 4}, binary, exit_status, use_stdio, {args, [BaseDirStr, MonitorExtStr, AllStr]}],
    PortName = fileSyncPath("fileSync"),
-   Opts = [{packet, 4}, binary, exit_status, use_stdio],
    Port = erlang:open_port({spawn_executable, PortName}, Opts),
    {kpS, State#state{port = Port}, {sTimeout, 4000, waitConnOver}}.
 
@@ -188,11 +205,11 @@ handleCast({miSyncNode, IsSync}, _, State) ->
    end;
 handleCast(miRescan, _, State) ->
    {Srcs, Hrls, Configs, Beams} = collSrcFiles(false),
-   {kpS_S, State#state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams}};
+   {noreply, State#state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams}, hibernate};
 handleCast(_Msg, _, _State) ->
    kpS_S.
 
-handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onMSyncFun = OnMSyncFun, onCSyncFun = OnCSyncFun, swSyncNode = SwSyncNode} = State) ->
+handleInfo({_Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onMSyncFun = OnMSyncFun, onCSyncFun = OnCSyncFun, swSyncNode = SwSyncNode} = State) ->
    case Status of
       running ->
          FileList = binary:split(Data, <<"\r\n">>, [global]),
@@ -227,17 +244,9 @@ handleInfo({Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls
       _ ->
          case Data of
             <<"init">> ->
-               %% port启动成功 先发送监听目录配置
-               {AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(false),
-               AddExtraStr = string:join([filename:nativename(OneDir) || OneDir <- AddExtraSrcDirs], "|"),
-               AddOnlyStr = string:join([filename:nativename(OneDir) || OneDir <- AddOnlySrcDirs], "|"),
-               OnlyStr = string:join([filename:nativename(OneDir) || OneDir <- OnlySrcDirs], "|"),
-               DelStr = string:join([filename:nativename(OneDir) || OneDir <- DelSrcDirs], "|"),
-               AllStr = string:join([AddExtraStr, AddOnlyStr, OnlyStr, DelStr], "\r\n"),
-               erlang:port_command(Port, AllStr),
-               ?logSuccess("eSync connect fileSync success..."),
                %% 然后收集一下监听目录下的src文件
                {BSrcs, BHrls, BConfigs, BBeams} = collSrcFiles(true),
+               ?logSuccess("eSync connect fileSync success and coll src files over..."),
                {nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}, {isHib, true}};
             _ ->
                ?logErrors("error, receive unexpect port msg ~p~n", [Data]),
@@ -349,7 +358,7 @@ tryGetModOpts(Module) ->
       Options7 = lists:keyreplace(debug_info_key, 1, Options6, debugInfoKeyFun()),
       {ok, Options7}
    catch _ExType:_Error ->
-      undefiend
+      undefined
    end.
 
 tryGetSrcOpts(SrcDir) ->
@@ -560,11 +569,7 @@ getSrcDir(Dir) ->
 getSrcDir(_Dir, 0) ->
    undefined;
 getSrcDir(Dir, Ctr) ->
-   HasCode = filelib:wildcard("*.erl", Dir) /= [] orelse
-      filelib:wildcard("*.hrl", Dir) /= [] orelse
-      filelib:wildcard("*.dtl", Dir) /= [] orelse
-      filelib:wildcard("*.lfe", Dir) /= [] orelse
-      filelib:wildcard("*.ex", Dir) /= [],
+   HasCode = filelib:wildcard("*.{erl,hrl,ex,dtl,lfe}", Dir) /= [],
    if
       HasCode -> {ok, Dir};
       true -> getSrcDir(filename:dirname(Dir), Ctr - 1)
@@ -651,14 +656,28 @@ mergeExtraDirs(IsAddPath) ->
          lists:foldl(FunMerge, {[], [], [], []}, ExtraList)
    end.
 
--define(RegExp, <<".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$">>).
+toBinary(Value) when is_list(Value) -> list_to_binary(Value);
+toBinary(Value) when is_binary(Value) -> Value.
+
+regExp() ->
+   % <<".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$">>
+   <<_Del:8, RegExpStr/binary>> = << <<"|", (toBinary(Tail))/binary>> || [_Dot | Tail] <- ?esCfgSync:getv(?monitorExt)>>,
+   <<".*\\.(", RegExpStr/binary, ")$">>.
+
+-define(RegExp, regExp()).
 collSrcFiles(IsAddPath) ->
    {AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
-   CollFiles = filelib:fold_files(filename:absname(<<"./">>), ?RegExp, true,
+   CollFiles = filelib:fold_files(filename:absname(toBinary(?esCfgSync:getv(?baseDir))), ?RegExp, true,
       fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
          case isOnlyDir(OnlySrcDirs, OneFile) andalso (not isDelDir(DelSrcDirs, OneFile)) of
             true ->
-               MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
+               MTimeSec = case file:read_file_info(OneFile, [raw]) of
+                  {ok, FileInfo} ->
+                     dateTimeToSec(FileInfo#file_info.mtime);
+                  _ ->
+                     0
+               end,
+               %MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
                case filename:extension(OneFile) of
                   <<".beam">> ->
                      BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),

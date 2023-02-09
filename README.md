@@ -1,41 +1,41 @@
 # eSync
 
     otp21.2+
-    Erlang's efficient automatic compile and reload tools！
+    Erlang即时重新编译和重新加载！
 
-## base on [fsnotify](https://github.com/fsnotify/fsnotify) Cross-platform file system notifications。
+## 基于 [fsnotify](https://github.com/fsnotify/fsnotify) 跨平台文件系统通知。
 
-## Modified from [sync](https://github.com/rustyio/sync)
+## 改造自 [sync](https://github.com/rustyio/sync)
 
-## Encapsulated monitoring file project [fileSync](https://github.com/ErlGameWorld/fileSync) If you want to build the executable file yourself, pull the monitoring file project, and then go build and copy the executable file to the priv directory of the project.
+## 封装的监听文件项目[fileSync](https://github.com/SisMaker/fileSync) 如果要自己构建执行文件, 拉取监听文件项目, 然后 go build 复制执行文件到该工程的 priv 目录即可
 
-# Features
+# 特点
 
-    This project implements its own compilation and loading function, and also supports additional compilation commands, but the execution of additional compilation commands is through os:cmd(), which will block the VM, which is not recommended.
-    After startup, eSync will collect information about source files and compilation options in the listening directory.
-    Not only is it suitable for development mode, it can also be run in a production environment.
-    Note: After linux pulls down the project, you need to add execution permissions to the executable files in the priv directory
+    本项目实现了自带编译与加载功能，另外支持额外的编译命令，但是执行额外的编译命令是通过os:cmd(),会阻塞VM不是很建议使用.
+    启动后，eSync会收集监听目录下的源文件和编译选项等的信息。
+    不仅适用于开发模式，也可以在生产环境中运行。
+    注意：linux下拉取项目后  需要给priv目录下的执行文件添加执行权限
 
-# How To Use
+# 使用
 
-    Start automatic compilation and loading
+    启动自动编译与加载 
         eSync:run().
-    Pause automatic compilation and loading
+    暂停自动编译与加载
         eSync:pause().
-    Stop automatically compiling the application
+    停止自动编译应用
         eSync:stop().    
-    Start or close cluster synchronous loading
+    启动或者关闭集群同步加载
         eSync:swSyncNode(TrueOrFalse).
-    Set compile and load log level
+    设置编译与加载日志提示
         eSync:setLog(Val).
-    Set the hook function after loading (support anonymous functions, {Mod, Fun} (Fun function has only one parameter) format, and their list combination)
+    设置加载后的钩子函数(支持匿名函数， {Mod, Fun}(Fun函数只有一个参数)格式， 以及他们的列表组合）
         eSync:setOnMSync(FunOrFuns).   
         eSync:setOnCSync(FunOrFuns). 
 
-# Configuration instructions
+# 配置说明
 
-    All to see: eSync.sample.config
-    The default configuration is
+    参见eSync.sample.config
+    默认配置为
     [ 
         {eSync，
     	    [

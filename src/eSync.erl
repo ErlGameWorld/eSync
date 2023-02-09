@@ -1158,8 +1158,7 @@ collIncludeCErls([Hrl | LeftHrl], SrcFiles, CSrcs, NewAddMap) ->
 
 whoInclude(HrlFile, AllFiles, CFiles, NewAddMap) ->
    HrlFileBaseName = filename:basename(HrlFile),
-   QuoteHrlFileBaseName = <<"\"", HrlFileBaseName/binary, "\"">>,
-   doMathEveryFile(maps:iterator(AllFiles), QuoteHrlFileBaseName, CFiles, NewAddMap).
+   doMathEveryFile(maps:iterator(AllFiles), HrlFileBaseName, CFiles, NewAddMap).
 
 doMathEveryFile(Iterator, HrlFileBaseName, CFiles, NewAddMap) ->
    case maps:next(Iterator) of
@@ -1217,8 +1216,15 @@ doMathEveryLine(IoDevice, HrlFileBaseName) ->
                   _ ->
                      false
                end;
-            _ ->
-               true
+            {match, [{Start, _Len} | _]} ->
+               case binary:at(Data, max(Start - 1, 0)) of
+                  47 ->                   %% /
+                     true;
+                  34 ->                   %% "
+                     true;
+                  _ ->
+                     false
+               end
          end;
       _ ->
          false

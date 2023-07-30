@@ -7,7 +7,7 @@
 -compile(inline).
 -compile({inline_size, 128}).
 
--define(IIF(Cond, Ret1, Ret2), (case Cond of true -> Ret1; _ -> Ret2 end)).
+-define(CASE(Cond, Ret1, Ret2), (case Cond of true -> Ret1; _ -> Ret2 end)).
 -define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
 
 -define(Log, log).
@@ -717,7 +717,7 @@ collSrcFiles(IsAddPath) ->
 
    FunCollAddExtra =
       fun(OneDir, FilesAcc) ->
-         filelib:fold_files(?IIF(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, true,
+         filelib:fold_files(?CASE(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, true,
             fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
                MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
                case filename:extension(OneFile) of
@@ -739,7 +739,7 @@ collSrcFiles(IsAddPath) ->
 
    FunCollAddOnly =
       fun(OneDir, FilesAcc) ->
-         filelib:fold_files(?IIF(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, false,
+         filelib:fold_files(?CASE(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, false,
             fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
                MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
                case filename:extension(OneFile) of
@@ -1095,7 +1095,7 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
          ignore;
       {ok, Options} ->
          RightFileDir = binary_to_list(filename:join(CurSrcDir, filename:basename(SrcFile))),
-         LastOptions = ?IIF(?esCfgSync:getv(?isJustMem), [binary, return | Options], [return | Options]),
+         LastOptions = ?CASE(?esCfgSync:getv(?isJustMem), [binary, return | Options], [return | Options]),
          case CompileFun(RightFileDir, LastOptions) of
             {ok, Module, Binary, Warnings} ->
                printResults(Module, RightFileDir, [], Warnings),

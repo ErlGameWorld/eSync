@@ -176,9 +176,9 @@
    {'reply', Reply :: term(), NewState :: term()} |                                                                    % 用作gen_server模式时快速响应进入消息接收
    {'sreply', Reply :: term(), NextStatus :: term(), NewState :: term()} |                                             % 用作gen_ipc模式便捷式返回reply 而不用把reply放在actions列表中
    {'noreply', NewState :: term()} |                                                                                   % 用作gen_server模式时快速响应进入消息接收
-   {'reply', Reply :: term(), NewState :: term(), Options :: hibernate | {doAfter, Args}} |                            % 用作gen_server模式时快速响应进入消息接收
+   {'reply', Reply :: term(), NewState :: term(), Options :: hibernate | {doAfter, Args :: term()}} |                            % 用作gen_server模式时快速响应进入消息接收
    {'sreply', Reply :: term(), NextStatus :: term(), NewState :: term(), Actions :: actions(eventAction())} |          % 用作gen_ipc模式便捷式返回reply 而不用把reply放在actions列表中
-   {'noreply', NewState :: term(), Options :: hibernate | {doAfter, Args}} |                                           % 用作gen_server模式时快速响应进入循环
+   {'noreply', NewState :: term(), Options :: hibernate | {doAfter, Args :: term()}} |                                           % 用作gen_server模式时快速响应进入循环
    {'nextS', NextStatus :: term(), NewState :: term()} |                                                               % {next_status,NextS,NewData,[]}
    {'nextS', NextStatus :: term(), NewState :: term(), Actions :: actions(eventAction())} |                            % Status transition, maybe to the same status
    commonCallbackResult(eventAction()).

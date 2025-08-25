@@ -334,7 +334,7 @@ getModOpts(Module) ->
 				Options7 = lists:keyreplace(debug_info_key, 1, Options6, debugInfoKeyFun()),
 				{ok, Options7}
 			catch ExType:Error ->
-				?logWarnings("~p:0: ~p looking for options: ~p. ~n", [Module, ExType, Error]),
+				?logWarnings("Module:~p looking for options:  ~p ~p. ~n", [Module, ExType, Error]),
 				undefined
 			end;
 		_ ->

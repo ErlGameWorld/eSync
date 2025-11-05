@@ -1,11 +1,12 @@
 -module(eSync).
 
--behaviour(es_gen_ipc).
+-behaviour(gen_server).
 
 -include_lib("kernel/include/file.hrl").
 
 -compile(inline).
 -compile({inline_size, 128}).
+-compile([export_all]).
 
 -define(CASE(Cond, Ret1, Ret2), (case Cond of true -> Ret1; _ -> Ret2 end)).
 -define(LOG_ON(Val), Val == true; Val == all; Val == skip_success; is_list(Val), Val =/= []).
@@ -27,7 +28,7 @@
 -define(DefCfgList, [{?Log, all}, {?baseDir, "./"}, {?monitorExt, ?ExtList}, {?compileCmd, undefined}, {?extraDirs, undefined}, {?descendant, fix}, {?onMSyncFun, undefined}, {?onCSyncFun, undefined}, {?swSyncNode, false}, {?isJustMem, false}, {?debugInfoKeyFun, undefined}]).
 
 -define(esCfgSync, esCfgSync).
--define(rootSrcDir, <<"src">>).
+-define(rootSrcDir, "src").
 
 -define(logSuccess(Format), canLog(success) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE])).
 -define(logSuccess(Format, Args), canLog(success) andalso error_logger:info_msg("eSync[~p:~p|~p] " ++ Format, [?MODULE, ?FUNCTION_NAME, ?LINE] ++ Args)).
@@ -58,17 +59,19 @@
 	setOnMSync/1,
 	getOnCSync/0,
 	setOnCSync/1,
-	swSyncNode/1
+	swSyncNode/1,
+	setOpts/2,
+	getRebarOpts/1,
+	getEMakefileOpts/1
 ]).
 
-%% es_gen_ipc callbacks
+%% gen_server callbacks
 -export([
 	init/1,
-	handleCall/4,
-	handleAfter/3,
-	handleCast/3,
-	handleInfo/3,
-	handleOnevent/4,
+	handle_call/3,
+	handle_continue/2,
+	handle_cast/2,
+	handle_info/2,
 	terminate/3
 ]).
 
@@ -94,7 +97,8 @@ run() ->
 -define(None, 0).
 
 -record(state, {
-	port = undefined
+	status = wait
+	, port = undefined
 	, onMSyncFun = undefined
 	, onCSyncFun = undefined
 	, swSyncNode = false
@@ -106,21 +110,21 @@ run() ->
 
 %% ************************************  API start ***************************
 rescan() ->
-	es_gen_ipc:cast(?SERVER, miRescan),
+	gen_server:cast(?SERVER, miRescan),
 	?logSuccess("start rescaning source files..."),
 	ok.
 
 unpause() ->
-	es_gen_ipc:cast(?SERVER, miUnpause),
+	gen_server:cast(?SERVER, miUnpause),
 	ok.
 
 pause() ->
-	es_gen_ipc:cast(?SERVER, miPause),
+	gen_server:cast(?SERVER, miPause),
 	?logSuccess("Pausing eSync. Call eSync:run() to restart"),
 	ok.
 
 curInfo() ->
-	es_gen_ipc:call(?SERVER, miCurInfo).
+	gen_server:call(?SERVER, miCurInfo).
 
 setLog(T) when ?LOG_ON(T) ->
 	setEnv(log, T),
@@ -137,32 +141,35 @@ getLog() ->
 	?esCfgSync:getv(log).
 
 swSyncNode(IsSync) ->
-	es_gen_ipc:cast(?SERVER, {miSyncNode, IsSync}),
+	gen_server:cast(?SERVER, {miSyncNode, IsSync}),
 	ok.
 
 getOnMSync() ->
-	es_gen_ipc:call(?SERVER, miGetOnMSync).
+	gen_server:call(?SERVER, miGetOnMSync).
 
 setOnMSync(Fun) ->
-	es_gen_ipc:call(?SERVER, {miSetOnMSync, Fun}).
+	gen_server:call(?SERVER, {miSetOnMSync, Fun}).
 
 getOnCSync() ->
-	es_gen_ipc:call(?SERVER, miGetOnCSync).
+	gen_server:call(?SERVER, miGetOnCSync).
 
 setOnCSync(Fun) ->
-	es_gen_ipc:call(?SERVER, {miSetOnCSync, Fun}).
+	gen_server:call(?SERVER, {miSetOnCSync, Fun}).
+
+setOpts(Dir, Opts) ->
+	gen_server:call(?SERVER, {miSetOpts, Dir, Opts}).
 
 %% ************************************  API end   ***************************
 start_link() ->
-	es_gen_ipc:start_link({local, ?SERVER}, ?MODULE, ?None, []).
+	gen_server:start_link({local, ?SERVER}, ?MODULE, ?None, []).
 
 %% status :: waiting | running | pause
 init(_Args) ->
 	erlang:process_flag(trap_exit, true),
 	loadCfg(),
-	{ok, waiting, #state{onMSyncFun = ?esCfgSync:getv(?onMSyncFun), onCSyncFun = ?esCfgSync:getv(?onCSyncFun), swSyncNode = ?esCfgSync:getv(?swSyncNode)}, {doAfter, ?None}}.
+	{ok, #state{onMSyncFun = ?esCfgSync:getv(?onMSyncFun), onCSyncFun = ?esCfgSync:getv(?onCSyncFun), swSyncNode = ?esCfgSync:getv(?swSyncNode)}, {continue, ?None}}.
 
-handleAfter(?None, waiting, State) ->
+handle_continue(?None, State) ->
 	%% 启动port 发送监听目录信息
 	{AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(false),
 	AddExtraStr = string:join([filename:nativename(OneDir) || OneDir <- AddExtraSrcDirs], "|"),
@@ -177,42 +184,46 @@ handleAfter(?None, waiting, State) ->
 	Opts = [{packet, 4}, binary, exit_status, use_stdio, {args, [BaseDirStr, MonitorExtStr, AllStr]}],
 	PortName = fileSyncPath("fileSync"),
 	Port = erlang:open_port({spawn_executable, PortName}, Opts),
-	{kpS, State#state{port = Port}, {sTimeout, 4000, waitConnOver}}.
+	{noreply, State#state{port = Port}, 4000}.
 
-handleCall(miGetOnMSync, _, #state{onMSyncFun = OnMSyncFun} = State, _From) ->
+handle_call(miGetOnMSync, _, #state{onMSyncFun = OnMSyncFun} = State) ->
 	{reply, OnMSyncFun, State};
-handleCall({miSetOnMSync, Fun}, _, State, _From) ->
+handle_call({miSetOnMSync, Fun}, _, State) ->
 	{reply, ok, State#state{onMSyncFun = Fun}};
-handleCall(miGetOnCSync, _, #state{onCSyncFun = OnCSyncFun} = State, _From) ->
+handle_call(miGetOnCSync, _, #state{onCSyncFun = OnCSyncFun} = State) ->
 	{reply, OnCSyncFun, State};
-handleCall({miSetOnCSync, Fun}, _, State, _From) ->
+handle_call({miSetOnCSync, Fun}, _, State) ->
 	{reply, ok, State#state{onCSyncFun = Fun}};
-handleCall(miCurInfo, Status, State, _Form) ->
-	{reply, {Status, erlang:get(), State}, State};
-handleCall(_Request, _, _State, _From) ->
-	kpS_S.
+handle_call(miCurInfo, _, State) ->
+	{reply, {erlang:get(), State}, State};
+handle_call({miSetOpts, Dir, Opts}, _, State) ->
+	SetDir = filename:absname(toList(Dir)),
+	setOptions(SetDir, Opts),
+	{reply, getOptions(SetDir), State};
+handle_call(_Request, _, _State) ->
+	{reply, ok, _State}.
 
-handleCast(miPause, running, State) ->
-	{nextS, pause, State};
-handleCast(miUnpause, pause, State) ->
-	{nextS, running, State};
-handleCast({miSyncNode, IsSync}, _, State) ->
+handle_cast(miPause, State) ->
+	{noreply, State#state{status = pause}};
+handle_cast(miUnpause, State) ->
+	{noreply, State#state{status = running}};
+handle_cast({miSyncNode, IsSync}, State) ->
 	case IsSync of
 		true ->
-			{kpS, State#state{swSyncNode = true}};
+			{noreply, State#state{swSyncNode = true}};
 		_ ->
-			{kpS, State#state{swSyncNode = false}}
+			{noreply, State#state{swSyncNode = false}}
 	end;
-handleCast(miRescan, _, State) ->
+handle_cast(miRescan, State) ->
 	{Srcs, Hrls, Configs, Beams} = collSrcFiles(false),
 	{noreply, State#state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams}, hibernate};
-handleCast(_Msg, _, _State) ->
-	kpS_S.
+handle_cast(_Msg, _State) ->
+	{noreply, _State}.
 
-handleInfo({_Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onMSyncFun = OnMSyncFun, onCSyncFun = OnCSyncFun, swSyncNode = SwSyncNode} = State) ->
+handle_info({_Port, {data, Data}}, #state{status = Status, srcFiles = Srcs, hrlFiles = Hrls, configs = Configs, beams = Beams, onMSyncFun = OnMSyncFun, onCSyncFun = OnCSyncFun, swSyncNode = SwSyncNode} = State) ->
 	case Status of
 		running ->
-			FileList = binary:split(Data, <<"\r\n">>, [global]),
+			FileList = string:split(toList(Data), "\r\n", all),
 			%% 收集改动了beam hrl src 文件 然后执行相应的逻辑
 			{CBeams, CConfigs, CHrls, CSrcs, NewSrcs, NewHrls, NewConfigs, NewBeams} = classifyChangeFile(FileList, [], [], #{}, #{}, Srcs, Hrls, Configs, Beams),
 			fireOnSync(OnCSyncFun, CConfigs),
@@ -222,7 +233,13 @@ handleInfo({_Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrl
 					LastCHrls = collIncludeCHrls(maps:keys(CHrls), NewHrls, CHrls, #{}),
 					NReSrcs = collIncludeCErls(maps:keys(LastCHrls), NewSrcs, CSrcs, #{}),
 					recompileChangeSrcFile(maps:iterator(NReSrcs), SwSyncNode),
-					{kpS, State#state{srcFiles = NewSrcs, hrlFiles = NewHrls, configs = NewConfigs, beams = NewBeams}};
+					case erlang:process_info(self(), memory) of
+						{memory, Bytes} when Bytes > 10 * 1024 * 1024 ->
+							erlang:garbage_collect();
+						_ ->
+							ignore
+					end,
+					{noreply, State#state{srcFiles = NewSrcs, hrlFiles = NewHrls, configs = NewConfigs, beams = NewBeams}};
 				CmdStr ->
 					case maps:size(CSrcs) > 0 orelse CHrls =/= [] of
 						true ->
@@ -239,40 +256,39 @@ handleInfo({_Port, {data, Data}}, Status, #state{srcFiles = Srcs, hrlFiles = Hrl
 						_ ->
 							ignore
 					end,
-					kpS_S
+					{noreply, State}
 			end;
-		_ ->
+		pause ->
+			{noreply, State};
+		wait ->
 			case Data of
 				<<"init">> ->
 					%% 然后收集一下监听目录下的src文件
 					{BSrcs, BHrls, BConfigs, BBeams} = collSrcFiles(true),
 					?logSuccess("eSync connect fileSync success and coll src files over..."),
-					{nextS, running, State#state{srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}, {isHib, true}};
+					{noreply, State#state{status = running, srcFiles = BSrcs, hrlFiles = BHrls, configs = BConfigs, beams = BBeams}, hibernate};
 				_ ->
 					?logErrors("error, receive unexpect port msg ~p~n", [Data]),
-					kpS_S
+					{noreply, State}
 			end
 	end;
-handleInfo({Port, closed}, running, #state{port = Port} = _State) ->
+handle_info({Port, closed}, #state{port = Port} = _State) ->
 	?logErrors("receive port closed ~n"),
-	{nextS, port_close, _State};
-handleInfo({'EXIT', Port, Reason}, running, #state{port = Port} = _State) ->
+	{stop, port_close, _State};
+handle_info({'EXIT', Port, Reason}, #state{port = Port} = _State) ->
 	?logErrors("receive port exit Reason:~p ~n", [Reason]),
-	{nextS, {port_EXIT, Reason}, _State};
-handleInfo({Port, {exit_status, Status}}, running, #state{port = Port} = _State) ->
+	{stop, {port_EXIT, Reason}, _State};
+handle_info({Port, {exit_status, Status}}, #state{port = Port} = _State) ->
 	?logErrors("receive port exit_status Status:~p ~p ~n", [Status, Port]),
-	{nextS, {port_exit_status, Status}, _State};
-handleInfo({'EXIT', _Pid, _Reason}, running, _State) ->
-	kpS_S;
-handleInfo(_Msg, _, _State) ->
+	{stop, {port_exit_status, Status}, _State};
+handle_info({'EXIT', _Pid, _Reason}, _State) ->
+	{noreply, _State};
+handle_info(timeout, State) ->
+	?logErrors("failed to connect the fileSync to stop state:~p ~n", [State]),
+	{stop, waitConnOver, State};
+handle_info(_Msg, _State) ->
 	?logErrors("receive unexpect msg:~p ~n", [_Msg]),
-	kpS_S.
-
-handleOnevent(sTimeout, waitConnOver, Status, State) ->
-	?logErrors("failed to connect the fileSync to stop stauts:~p state:~p ~n", [Status, State]),
-	stop;
-handleOnevent(_EventType, _EventContent, _Status, _State) ->
-	kpS_S.
+	{noreply, _State}.
 
 terminate(_Reason, _Status, _State) ->
 	ok.
@@ -341,6 +357,66 @@ getModOpts(Module) ->
 			undefined
 	end.
 
+%% Parse rebar.config file to extract compile options
+getRebarOpts(Rebar3File) ->
+	case file:consult(Rebar3File) of
+		{ok, Rebar3Config} ->
+			case proplists:get_value(erl_opts, Rebar3Config) of
+				undefined ->
+					[];
+				ErlOpts ->
+					filename:absname(Rebar3File),
+					SrcDir = filename:dirname(filename:absname(Rebar3File)),
+					[{SrcDir, ErlOpts}]
+			end;
+		_ ->
+			[]
+	end.
+
+%% Parse EMakefile to extract compile options
+getEMakefileOpts(EMakefile) ->
+	case file:consult(EMakefile) of
+		{ok, EMake} ->
+			Ret = transform(EMake, #{}),
+			maps:to_list(maps:remove(undefined, Ret));
+		{error, enoent} ->
+			[]
+	end.
+
+transform([], SrcOpts) ->
+	SrcOpts;
+transform([{Mod, ModOpts} | EMake], SrcOpts) ->
+	NSrcOpts = expand(Mod, ModOpts, SrcOpts),
+	transform(EMake, NSrcOpts);
+transform([_Mod | EMake], SrcOpts) ->
+	transform(EMake, SrcOpts).
+
+expand(Mod, ModOpts, SrcOpts) when is_atom(Mod) ->
+	expand(atom_to_list(Mod), ModOpts, SrcOpts);
+expand(Mods, ModOpts, SrcOpts) when is_list(Mods), not is_integer(hd(Mods)) ->
+	foldMod(Mods, ModOpts, SrcOpts);
+expand(Mod, ModOpts, SrcOpts) ->
+	case lists:member($*, Mod) of
+		true ->
+			foldErl(filelib:wildcard(Mod ++ ".erl"), ModOpts, SrcOpts);
+		_ ->
+			M = filename:rootname(Mod, ".erl"),
+			SrcDir = getRootSrcDirFromSrcDir(filename:absname(M)),
+			SrcOpts#{SrcDir => ModOpts}
+	end.
+
+foldMod([], _ModOpts, SrcOpts) ->
+	SrcOpts;
+foldMod([Mod | Mods], ModOpts, SrcOpts) ->
+	NSrcOpts = expand(Mod, ModOpts, SrcOpts),
+	foldMod(Mods, ModOpts, NSrcOpts).
+
+foldErl([], _ModOpts, SrcOpts) ->
+	SrcOpts;
+foldErl([OneFile | Left], ModOpts, SrcOpts) ->
+	SrcDir = getRootSrcDirFromSrcDir(filename:absname(OneFile)),
+	foldErl(Left, ModOpts, SrcOpts#{SrcDir => ModOpts}).
+
 tryGetModOpts(Module) ->
 	try
 		Props = Module:module_info(compile),
@@ -376,7 +452,7 @@ tryGetSrcOpts(SrcDir) ->
 				_ when IsBaseSrcDir ->
 					try filelib:fold_files(SrcDir, ".*\\.(erl|dtl|lfe|ex)$", true,
 						fun(OneFile, Acc) ->
-							Mod = binary_to_atom(filename:basename(OneFile, filename:extension(OneFile))),
+							Mod = list_to_atom(filename:basename(OneFile, fileExt(OneFile))),
 							case tryGetModOpts(Mod) of
 								{ok, _Options} = Opts ->
 									throw(Opts);
@@ -407,15 +483,15 @@ ensureInclude(Options) ->
 
 transformAllIncludes(Module, BeamDir, Options) ->
 	[begin
-		 case Opt of
-			 {i, IncludeDir} ->
-				 {ok, SrcDir} = getModSrcDir(Module),
-				 {ok, IncludeDir2} = determineIncludeDir(IncludeDir, BeamDir, SrcDir),
-				 {i, IncludeDir2};
-			 _ ->
-				 Opt
-		 end
-	 end || Opt <- Options].
+		case Opt of
+			{i, IncludeDir} ->
+				{ok, SrcDir} = getModSrcDir(Module),
+				{ok, IncludeDir2} = determineIncludeDir(IncludeDir, BeamDir, SrcDir),
+				{i, IncludeDir2};
+			_ ->
+				Opt
+		end
+	end || Opt <- Options].
 
 maybeAddCompileInfo(Options) ->
 	case lists:member(compile_info, Options) of
@@ -440,9 +516,9 @@ getFileType(Module) when is_atom(Module) ->
 	getFileType(Source);
 
 getFileType(Source) ->
-	Ext = filename:extension(Source),
+	Ext = fileExt(Source),
 	Root = filename:rootname(Source),
-	SecondExt = filename:extension(Root),
+	SecondExt = fileExt(Root),
 	case Ext of
 		<<".erl">> when SecondExt =:= <<".dtl">> -> dtl;
 		<<".dtl">> -> dtl;
@@ -455,6 +531,9 @@ getFileType(Source) ->
 		".lfe" -> lfe;
 		".ex" -> elixir
 	end.
+
+fileExt(FileName) ->
+	toList(filename:extension(FileName)).
 
 %% This will search back to find an appropriate include directory, by
 %% searching further back than "..". Instead, it will extract the basename
@@ -492,7 +571,7 @@ determineIncludeDirFromBeamDir(IncludeBase, IncludeDir, BeamDir) ->
 
 %% get the src dir
 getRootSrcDirFromSrcDir(TSrcDir) ->
-	SrcDir = ?CASE(is_list(TSrcDir), list_to_binary(TSrcDir), TSrcDir),
+	SrcDir = ?CASE(is_list(TSrcDir), TSrcDir, toList(TSrcDir)),
 	NewDirName = filename:dirname(SrcDir),
 	BaseName = filename:basename(SrcDir),
 	case BaseName of
@@ -663,6 +742,9 @@ mergeExtraDirs(IsAddPath) ->
 toBinary(Value) when is_list(Value) -> list_to_binary(Value);
 toBinary(Value) when is_binary(Value) -> Value.
 
+toList(Value) when is_list(Value) -> Value;
+toList(Value) when is_binary(Value) -> unicode:characters_to_list(Value).
+
 regExp() ->
 	% <<".*\\.(erl|hrl|beam|config|dtl|lfe|ex)$">>
 	<<_Del:8, RegExpStr/binary>> = <<<<"|", (toBinary(Tail))/binary>> || [_Dot | Tail] <- ?esCfgSync:getv(?monitorExt)>>,
@@ -671,26 +753,26 @@ regExp() ->
 -define(RegExp, regExp()).
 collSrcFiles(IsAddPath) ->
 	{AddExtraSrcDirs, AddOnlySrcDirs, OnlySrcDirs, DelSrcDirs} = mergeExtraDirs(IsAddPath),
-	CollFiles = filelib:fold_files(filename:absname(toBinary(?esCfgSync:getv(?baseDir))), ?RegExp, true,
+	CollFiles = filelib:fold_files(filename:absname(toList(?esCfgSync:getv(?baseDir))), ?RegExp, true,
 		fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
 			case isOnlyDir(OnlySrcDirs, OneFile) andalso (not isDelDir(DelSrcDirs, OneFile)) of
 				true ->
 					MTimeSec = case file:read_file_info(OneFile, [raw]) of
-									  {ok, FileInfo} ->
-										  dateTimeToSec(FileInfo#file_info.mtime);
-									  _ ->
-										  0
-								  end,
+						{ok, FileInfo} ->
+							dateTimeToSec(FileInfo#file_info.mtime);
+						_ ->
+							0
+					end,
 					%MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
-					case filename:extension(OneFile) of
-						<<".beam">> ->
-							BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+					case fileExt(OneFile) of
+						".beam" ->
+							BeamMod = list_to_atom(filename:basename(OneFile, ".beam")),
 							setelement(4, Acc, Beams#{BeamMod => MTimeSec});
-						<<".config">> ->
+						".config" ->
 							setelement(3, Acc, Configs#{OneFile => MTimeSec});
-						<<".hrl">> ->
+						".hrl" ->
 							setelement(2, Acc, Hrls#{OneFile => MTimeSec});
-						<<>> ->
+						[] ->
 							Acc;
 						_ ->
 							RootSrcDir =
@@ -701,7 +783,7 @@ collSrcFiles(IsAddPath) ->
 										RetSrcDir
 								end,
 
-							Mod = binary_to_atom(filename:basename(OneFile, filename:extension(OneFile))),
+							Mod = list_to_atom(filename:basename(OneFile, fileExt(OneFile))),
 							case getModOpts(Mod) of
 								{ok, Options} ->
 									setOptions(RootSrcDir, Options);
@@ -720,15 +802,15 @@ collSrcFiles(IsAddPath) ->
 			filelib:fold_files(?CASE(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, true,
 				fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
 					MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
-					case filename:extension(OneFile) of
-						<<".beam">> ->
-							BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+					case fileExt(OneFile) of
+						".beam" ->
+							BeamMod = list_to_atom(filename:basename(OneFile, ".beam")),
 							setelement(4, Acc, Beams#{BeamMod => MTimeSec});
-						<<".config">> ->
+						".config" ->
 							setelement(3, Acc, Configs#{OneFile => MTimeSec});
-						<<".hrl">> ->
+						".hrl" ->
 							setelement(2, Acc, Hrls#{OneFile => MTimeSec});
-						<<>> ->
+						[] ->
 							Acc;
 						_ ->
 							setelement(1, Acc, Srcs#{OneFile => MTimeSec})
@@ -742,15 +824,15 @@ collSrcFiles(IsAddPath) ->
 			filelib:fold_files(?CASE(is_list(OneDir), list_to_binary(OneDir), OneDir), ?RegExp, false,
 				fun(OneFile, {Srcs, Hrls, Configs, Beams} = Acc) ->
 					MTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
-					case filename:extension(OneFile) of
-						<<".beam">> ->
-							BeamMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+					case fileExt(OneFile) of
+						".beam" ->
+							BeamMod = list_to_atom(filename:basename(OneFile, ".beam")),
 							setelement(4, Acc, Beams#{BeamMod => MTimeSec});
-						<<".config">> ->
+						".config" ->
 							setelement(3, Acc, Configs#{OneFile => MTimeSec});
-						<<".hrl">> ->
+						".hrl" ->
 							setelement(2, Acc, Hrls#{OneFile => MTimeSec});
-						<<>> ->
+						[] ->
 							Acc;
 						_ ->
 							setelement(1, Acc, Srcs#{OneFile => MTimeSec})
@@ -932,7 +1014,7 @@ onSyncApply(Fun, Modules) when is_function(Fun) ->
 reloadChangedMod([], _SwSyncNode, OnSyncFun, Acc) ->
 	fireOnSync(OnSyncFun, Acc);
 reloadChangedMod([Module | LeftMod], SwSyncNode, OnSyncFun, Acc) ->
-	case Module == es_gen_ipc orelse code:get_object_code(Module) of
+	case code:get_object_code(Module) of
 		true ->
 			ignore;
 		error ->
@@ -1002,7 +1084,7 @@ erlydtlCompile(SrcFile, Options) ->
 			(OtherOption, Acc) -> [OtherOption | Acc]
 		end,
 	DtlOptions = lists:foldl(F, [], Options),
-	Module = binary_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl")),
+	Module = list_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl")),
 	Compiler = erlydtl,
 	Compiler:compile(SrcFile, Module, DtlOptions).
 
@@ -1026,13 +1108,13 @@ lfe_compile(SrcFile, Options) ->
 getCompileFunAndModuleName(SrcFile) ->
 	case getFileType(SrcFile) of
 		erl ->
-			{fun compile:file/2, binary_to_atom(filename:basename(SrcFile, <<".erl">>))};
+			{fun compile:file/2, list_to_atom(filename:basename(SrcFile, ".erl"))};
 		dtl ->
-			{fun erlydtlCompile/2, list_to_atom(lists:flatten(binary_to_list(filename:basename(SrcFile, <<".dtl">>)) ++ "_dtl"))};
+			{fun erlydtlCompile/2, list_to_atom(lists:flatten(filename:basename(SrcFile, ".dtl") ++ "_dtl"))};
 		lfe ->
-			{fun lfe_compile/2, binary_to_atom(filename:basename(SrcFile, <<".lfe">>))};
+			{fun lfe_compile/2, list_to_atom(filename:basename(SrcFile, ".lfe"))};
 		elixir ->
-			{fun elixir_compile/2, binary_to_atom(filename:basename(SrcFile, <<".ex">>))}
+			{fun elixir_compile/2, list_to_atom(filename:basename(SrcFile, ".ex"))}
 	end.
 
 getObjectCode(Module) ->
@@ -1091,11 +1173,11 @@ recompileSrcFile(SrcFile, SwSyncNode) ->
 	CurSrcDir = filename:dirname(SrcFile),
 	{CompileFun, Module} = getCompileFunAndModuleName(SrcFile),
 	{OldBinary, Filename} = getObjectCode(Module),
-	case Module == es_gen_ipc orelse getOptions(RootSrcDir) of
+	case getOptions(RootSrcDir) of
 		true ->
 			ignore;
 		{ok, Options} ->
-			RightFileDir = binary_to_list(filename:join(CurSrcDir, filename:basename(SrcFile))),
+			RightFileDir = filename:join(CurSrcDir, filename:basename(SrcFile)),
 			LastOptions = ?CASE(?esCfgSync:getv(?isJustMem), [binary, return | Options], [return | Options]),
 			case CompileFun(RightFileDir, LastOptions) of
 				{ok, Module, Binary, Warnings} ->
@@ -1235,9 +1317,9 @@ classifyChangeFile([], Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs,
 	{Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams};
 classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams) ->
 	CurMTimeSec = dateTimeToSec(filelib:last_modified(OneFile)),
-	case filename:extension(OneFile) of
-		<<".beam">> ->
-			BinMod = binary_to_atom(filename:basename(OneFile, <<".beam">>)),
+	case fileExt(OneFile) of
+		".beam" ->
+			BinMod = list_to_atom(filename:basename(OneFile, ".beam")),
 			case ColBeams of
 				#{BinMod := OldMTimeSec} ->
 					case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
@@ -1249,22 +1331,22 @@ classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, Co
 				_ ->
 					classifyChangeFile(LeftFile, [BinMod | Beams], Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams#{BinMod => CurMTimeSec})
 			end;
-		<<".config">> ->
+		".config" ->
 			AbsFile = filename:absname(OneFile),
 			case ColConfigs of
 				#{AbsFile := OldMTimeSec} ->
 					case CurMTimeSec =/= OldMTimeSec andalso CurMTimeSec =/= 0 of
 						true ->
-							CfgMod = erlang:binary_to_atom(filename:basename(AbsFile, <<".config">>), utf8),
+							CfgMod = erlang:list_to_atom(filename:basename(AbsFile, ".config")),
 							classifyChangeFile(LeftFile, Beams, [CfgMod | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile := CurMTimeSec}, ColBeams);
 						_ ->
 							classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams)
 					end;
 				_ ->
-					CfgMod = erlang:binary_to_atom(filename:basename(AbsFile, <<".config">>), utf8),
+					CfgMod = erlang:list_to_atom(filename:basename(AbsFile, ".config")),
 					classifyChangeFile(LeftFile, Beams, [CfgMod | Configs], Hrls, Srcs, ColSrcs, ColHrls, ColConfigs#{AbsFile => CurMTimeSec}, ColBeams)
 			end;
-		<<".hrl">> ->
+		".hrl" ->
 			AbsFile = filename:absname(OneFile),
 			case ColHrls of
 				#{AbsFile := OldMTimeSec} ->
@@ -1277,7 +1359,7 @@ classifyChangeFile([OneFile | LeftFile], Beams, Configs, Hrls, Srcs, ColSrcs, Co
 				_ ->
 					classifyChangeFile(LeftFile, Beams, Configs, Hrls#{AbsFile => 1}, Srcs, ColSrcs, ColHrls#{AbsFile => CurMTimeSec}, ColConfigs, ColBeams)
 			end;
-		<<>> ->
+		[] ->
 			classifyChangeFile(LeftFile, Beams, Configs, Hrls, Srcs, ColSrcs, ColHrls, ColConfigs, ColBeams);
 		_ ->
 			AbsFile = filename:absname(OneFile),
@@ -1299,7 +1381,13 @@ fileSyncPath(ExecName) ->
 		{error, _} ->
 			case code:which(?MODULE) of
 				Filename when is_list(Filename) ->
-					filename:join([filename:dirname(filename:dirname(Filename)), "priv", ExecName]);
+					CurBeamDir = filename:join([filename:dirname(Filename), ExecName]),
+					case filelib:is_file(CurBeamDir) of
+						true ->
+							CurBeamDir;
+						_ ->
+							filename:join([filename:dirname(filename:dirname(Filename)), "priv", ExecName])
+					end;
 				_ ->
 					filename:join("../priv", ExecName)
 			end;

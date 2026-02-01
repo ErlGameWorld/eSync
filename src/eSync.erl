@@ -53,7 +53,7 @@
                case Errors of
                   [] ->
                      ?logWarnings("~s: ~p: ~s: ~s", [SrcFile, PPLine, PPPrefix, PPMsg]);
-                  logErrors ->
+                  _ ->
                      ?logErrors("~s: ~p: ~s: ~s", [SrcFile, PPLine, PPPrefix, PPMsg])
                end
             end,
@@ -66,6 +66,8 @@ end).
    start/2,
    start/0,
    stop/0,
+   kill/0,
+   restart/0,
    run/0
 ]).
 
@@ -106,6 +108,26 @@ start() ->
 
 stop() ->
    application:stop(eSync).
+
+kill() ->
+	case whereis(eSync) of
+		undefined ->
+			ignore;
+		Pid ->
+			Ref = erlang:monitor(process, Pid),
+			exit(Pid, kill),
+			receive
+				{'DOWN', Ref, process, Pid, _Reason} ->
+					killed
+			after 5000 ->
+				erlang:demonitor(Ref, [flush]),
+				{error, timeout}
+			end
+	end.
+
+restart() ->
+   kill(),
+   start().
 
 run() ->
    case start() of
